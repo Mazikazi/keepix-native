@@ -2,7 +2,7 @@
 
 [![Android API](https://img.shields.io/badge/API-29%20%2B-brightgreen.svg?style=flat)](https://android-sdk.is)
 [![OWASP Mobile MASVS](https://img.shields.io/badge/OWASP-MASVS%20Compliant-blue.svg)](https://mas.owasp.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 A premium, Tinder-style gallery cleanup app for Android. Built natively using modern Android engineering practices, including Jetpack Compose (Material 3), Room DB, WorkManager, and reactive Coroutine Flows.
 
