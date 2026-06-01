@@ -175,6 +175,3 @@ This project has been thoroughly audited and hardened in compliance with the **O
 
 ---
 
-## 📄 License
-
-Keepix is open-source software licensed under the [MIT License](LICENSE).
