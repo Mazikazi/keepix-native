@@ -1,0 +1,25 @@
+# Build outputs
+*.iml
+.gradle/
+/build/
+/app/build/
+/captures
+.externalNativeBuild
+.cxx
+
+# IDE
+/.idea/
+.DS_Store
+
+# Local config (secrets, device-specific paths)
+local.properties
+
+# Kotlin
+.kotlin/
+
+# Agent / dev toolkit (not part of the app)
+gstack/
+.agent/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
