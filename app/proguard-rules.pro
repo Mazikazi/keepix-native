@@ -4,9 +4,11 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# Room
+# Room: keep all entities, DAOs, RoomDatabase
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *
+-keep @androidx.room.Dao interface *
+-keep class * extends androidx.room.RoomDatabase { *; }
 -dontwarn androidx.room.paging.**
 
 # Coil
@@ -22,10 +24,6 @@
     volatile <fields>;
 }
 
-# Keep data classes used in Room
--keep class com.sese.keepix.db.BinItemEntity { *; }
--keep class com.sese.keepix.data.MediaItem { *; }
-
 # WorkManager
 -keep class * extends androidx.work.Worker
 -keep class * extends androidx.work.ListenableWorker
@@ -33,7 +31,13 @@
     @androidx.work.Worker <methods>;
 }
 
-# OWASP: Strip debug/verbose/info logging from release builds
+# Keepix: Room entities package (BinItemEntity, KeptItemEntity, etc.)
+-keep class com.sese.keepix.db.**Entity { *; }
+
+# Keepix: Preferences DataStore
+-keep class com.sese.keepix.data.KeepixPreferences { *; }
+
+# OWASP: Strip debug/verbose/info/warn logging from release
 -assumenosideeffects class android.util.Log {
     public static int d(...);
     public static int v(...);
