@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background: deep violet radial gradient -->
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1A0A2E"/>
+      <stop offset="100%" stop-color="#0D0217"/>
+    </radialGradient>
+    <!-- Neon lime stroke for the monogram -->
+    <linearGradient id="limeStroke" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#B8FF00"/>
+      <stop offset="100%" stop-color="#7FDB00"/>
+    </linearGradient>
+    <!-- Inner glow filter -->
+    <filter id="innerGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded square canvas -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bgGrad)"/>
+
+  <!-- Subtle glassmorphism highlight arc -->
+  <path d="M80 80 Q256 40 432 80" stroke="rgba(255,255,255,0.08)" stroke-width="2" fill="none"/>
+
+  <!-- Monogram "K" — bold, geometric, neon lime stroke -->
+  <text
+    x="256" y="336"
+    font-family="system-ui, sans-serif"
+    font-weight="900"
+    font-size="280"
+    text-anchor="middle"
+    dominant-baseline="central"
+    fill="none"
+    stroke="url(#limeStroke)"
+    stroke-width="8"
+    filter="url(#innerGlow)"
+  >K</text>
+
+  <!-- Tiny swipe hint: two micro-arcs (right green, left red) -->
+  <g opacity="0.6">
+    <path d="M180 400 Q220 380 260 400" stroke="#00E676" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <path d="M332 400 Q292 380 252 400" stroke="#FF1744" stroke-width="4" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>
