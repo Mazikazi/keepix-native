@@ -1,11 +1,13 @@
 package com.sese.keepix.ui
 
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -41,7 +43,20 @@ fun KeptItemsScreen(
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text("Kept Items", color = TextPrimary) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "💚",
+                            fontSize = 28.sp,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        Text(
+                            text = "KEPT ITEMS",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = TextPrimary,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -63,20 +78,21 @@ fun KeptItemsScreen(
             if (items.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("💚", fontSize = 64.sp)
+                        Text("💚", fontSize = 96.sp)
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No kept items yet",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = TextPrimary
+                            text = "NO KEEPS YET!",
+                            style = MaterialTheme.typography.displaySmall,
+                            color = com.sese.keepix.ui.theme.KeepLime,
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Swipe right to keep photos",
-                            color = TextSecondary
+                            text = "Swipe right on photos you love 💖",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = TextSecondary,
                         )
                     }
                 }
@@ -86,9 +102,10 @@ fun KeptItemsScreen(
                     contentPadding = PaddingValues(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(items) { keptItem ->
+                    itemsIndexed(items) { i, keptItem ->
                         KeptGridItem(
                             item = keptItem,
+                            accentIndex = i,
                             onClick = { onItemTap(keptItem) },
                             onLongClick = { showUnkeepConfirmation = keptItem }
                         )
@@ -129,6 +146,7 @@ fun KeptItemsScreen(
 @Composable
 private fun KeptGridItem(
     item: KeptItemEntity,
+    accentIndex: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -136,7 +154,12 @@ private fun KeptGridItem(
         modifier = Modifier
             .padding(4.dp)
             .aspectRatio(1f)
-            .glassmorphism(cornerRadius = 12.dp)
+            .maxBox(
+                shape = RoundedCornerShape(12.dp),
+                background = Color.Black.copy(alpha = 0.4f),
+                borderColor = com.sese.keepix.ui.theme.AccentsAt(accentIndex),
+                borderWidth = 2.dp,
+            )
             .clickable(onClick = onClick)
     ) {
         AsyncImage(
@@ -151,8 +174,8 @@ private fun KeptGridItem(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .glassmorphism(cornerRadius = 0.dp, tintAlpha = 0.4f)
                 .padding(4.dp)
+                .background(Color(0x66000000))
         ) {
             Text(
                 text = formatDate(item.keptAt),
