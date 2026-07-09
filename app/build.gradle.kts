@@ -14,14 +14,38 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            val storeFile = project.findProperty("KEEPIX_KEYSTORE_FILE") as String?
+            val storePassword = project.findProperty("KEEPIX_KEYSTORE_PASSWORD") as String?
+            val keyAlias = project.findProperty("KEEPIX_KEY_ALIAS") as String?
+            val keyPassword = project.findProperty("KEEPIX_KEY_PASSWORD") as String?
+
+            if (storeFile == null || storePassword == null || keyAlias == null || keyPassword == null) {
+                throw GradleException(
+                    "Release signing properties missing. " +
+                    "Set KEEPIX_KEYSTORE_FILE, KEEPIX_KEYSTORE_PASSWORD, " +
+                    "KEEPIX_KEY_ALIAS, KEEPIX_KEY_PASSWORD in gradle.properties"
+                )
+            }
+
+            this.storeFile = file(storeFile)
+            this.storePassword = storePassword
+            this.keyAlias = keyAlias
+            this.keyPassword = keyPassword
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -37,6 +61,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
