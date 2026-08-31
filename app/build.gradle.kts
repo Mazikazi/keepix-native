@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.sese.keepix"
-        minSdk = 29
+        minSdk = 30
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
@@ -63,6 +63,14 @@ android {
         compose = true
         buildConfig = true
     }
+    // Room's exported schema JSON, so migrations can be diffed and tested.
+    sourceSets.getByName("androidTest") {
+        assets.srcDir("$projectDir/schemas")
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

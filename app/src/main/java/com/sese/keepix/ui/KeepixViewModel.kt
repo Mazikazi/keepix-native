@@ -1,7 +1,6 @@
 package com.sese.keepix.ui
 
 import android.app.Application
-import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,7 +12,6 @@ import com.sese.keepix.data.MediaAccessException
 import com.sese.keepix.db.AppDatabase
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
-import com.sese.keepix.utils.MediaDeletionHandler
 import com.sese.keepix.utils.SessionCleanupWorker
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -49,6 +47,22 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     val binCount: StateFlow<Int> = binItemDao.getBinCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    /**
+     * Bin rows that cleanup has marked for permanent removal. The Activity turns
+     * these into a single `MediaStore.createDeleteRequest` and calls back into
+     * [confirmDeletion] on `RESULT_OK` or [deferDeletion] on anything else.
+     */
+    val pendingDeletionUris: StateFlow<List<BinItemEntity>> = binItemDao.getPendingDeletion()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Set once the user has been shown — and has dismissed or cancelled — the
+     * system delete dialog in this process. Prevents re-prompting in a loop.
+     * In-memory only: it resets on the next launch.
+     */
+    var promptedThisSession: Boolean = false
+        private set
+
     // Kept state
     val keptItems: StateFlow<List<KeptItemEntity>> = keptItemDao.getAllItems()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -63,13 +77,13 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private var loadedCount = 0
 
     init {
-        performSessionCleanup()
+        performLaunchCleanup()
         schedulePeriodicCleanup()
     }
 
     private fun schedulePeriodicCleanup() {
         val workRequest = PeriodicWorkRequestBuilder<SessionCleanupWorker>(
-            15, TimeUnit.MINUTES
+            1, TimeUnit.DAYS
         )
             .setConstraints(
                 Constraints.Builder()
@@ -80,31 +94,36 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
 
         WorkManager.getInstance(getApplication()).enqueueUniquePeriodicWork(
             "session_cleanup",
-            ExistingPeriodicWorkPolicy.KEEP,
+            // UPDATE, not KEEP: existing installs already have a 15-minute request
+            // enqueued under this name and KEEP would leave it running forever.
+            ExistingPeriodicWorkPolicy.UPDATE,
             workRequest
         )
     }
 
-    private fun performSessionCleanup() {
+    /**
+     * Runs once per process launch. Rotates the session id — the only place that
+     * happens — and *marks* everything the retention policy has expired.
+     *
+     * Nothing is deleted here. The rows stay in the bin, still restorable, until
+     * the user confirms the system delete dialog.
+     */
+    private fun performLaunchCleanup() {
         viewModelScope.launch {
             val previousSessionId = prefs.generateNewSession()
 
             if (previousSessionId.isNotEmpty()) {
-                // Delete session-mode items from previous session
+                // Session-mode items binned before this launch.
                 val expiredSessionItems = binItemDao.getExpiredSessionItems(prefs.currentSessionId)
                 if (expiredSessionItems.isNotEmpty()) {
-                    val uris = expiredSessionItems.map { Uri.parse(it.mediaUri) }
-                    MediaDeletionHandler.deleteMediaDirectly(getApplication(), uris)
-                    binItemDao.deleteByIds(expiredSessionItems.map { it.id })
+                    binItemDao.markPendingDeletion(expiredSessionItems.map { it.id })
                 }
             }
 
-            // Delete timed items that have expired
+            // Timed items whose retention period has elapsed.
             val expiredTimedItems = binItemDao.getExpiredTimedItems(System.currentTimeMillis())
             if (expiredTimedItems.isNotEmpty()) {
-                val uris = expiredTimedItems.map { Uri.parse(it.mediaUri) }
-                MediaDeletionHandler.deleteMediaDirectly(getApplication(), uris)
-                binItemDao.deleteByIds(expiredTimedItems.map { it.id })
+                binItemDao.markPendingDeletion(expiredTimedItems.map { it.id })
             }
         }
     }
@@ -208,22 +227,38 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun getUrisForDeletion(): List<Uri> {
-        return binItems.value.map { Uri.parse(it.mediaUri) }
-    }
-
-    fun clearBin() {
-        viewModelScope.launch {
-            binItemDao.clearAll()
-        }
-    }
-
+    /**
+     * User asked to permanently delete these bin items. This only marks them; the
+     * Activity picks the marked rows up from [pendingDeletionUris] and launches
+     * the system confirmation dialog.
+     */
     fun deleteBinItems(items: List<BinItemEntity>) {
+        if (items.isEmpty()) return
+        // An explicit user request re-arms the prompt even after an earlier cancel.
+        promptedThisSession = false
         viewModelScope.launch {
-            val uris = items.map { Uri.parse(it.mediaUri) }
-            MediaDeletionHandler.deleteMediaDirectly(getApplication(), uris)
-            binItemDao.deleteByIds(items.map { it.id })
+            binItemDao.markPendingDeletion(items.map { it.id })
         }
+    }
+
+    /**
+     * Drops the Room rows for items whose file deletion the system dialog actually
+     * confirmed. This is the ONLY place a bin row is removed for deletion, and it
+     * must only be called on `RESULT_OK`.
+     */
+    fun confirmDeletion(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            binItemDao.deleteByIds(ids)
+        }
+    }
+
+    /**
+     * The user cancelled the system delete dialog. The rows stay marked and stay
+     * in the bin; we just stop re-prompting until the next launch.
+     */
+    fun deferDeletion() {
+        promptedThisSession = true
     }
 
     fun unkeepItem(item: KeptItemEntity) {
@@ -232,13 +267,4 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             loadMedia()
         }
     }
-
-    fun clearKept() {
-        viewModelScope.launch {
-            keptItemDao.clearAll()
-        }
-    }
-
-    val remainingCount: Int
-        get() = _mediaItems.value.size
 }

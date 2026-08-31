@@ -24,7 +24,6 @@ import androidx.navigation.navArgument
 import com.sese.keepix.ui.*
 import com.sese.keepix.ui.theme.DarkBackground
 import com.sese.keepix.ui.theme.KeepixTheme
-import com.sese.keepix.utils.MediaDeletionHandler
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 
@@ -90,15 +89,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
     }
 
-    // Deletion Launcher (Scoped Storage for Android 11+)
-    val deleteLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            viewModel.clearBin()
-            viewModel.loadMedia()
-        }
-    }
+    // TASK 3 wires the system delete dialog here: a StartIntentSenderForResult
+    // launcher plus a LaunchedEffect on viewModel.pendingDeletionUris that builds
+    // one MediaStore.createDeleteRequest over the marked URIs and calls
+    // viewModel.confirmDeletion(ids) on RESULT_OK / viewModel.deferDeletion()
+    // otherwise. Until then, delete actions only mark rows as pending.
 
     // Collect state
     val mediaItems by viewModel.mediaItems.collectAsState()
@@ -195,21 +190,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 items = binItems,
                 isSessionMode = viewModel.prefs.isSessionMode,
                 onRestore = { item -> viewModel.restoreItem(item) },
-                onDeleteConfirmed = {
-                    val uris = viewModel.getUrisForDeletion()
-                    if (uris.isNotEmpty()) {
-                        val intent = MediaDeletionHandler.getDeletionIntent(context, uris)
-                        if (intent != null) {
-                            deleteLauncher.launch(
-                                androidx.activity.result.IntentSenderRequest.Builder(intent.intentSender).build()
-                            )
-                        } else {
-                            MediaDeletionHandler.deleteMediaDirectly(context, uris)
-                            viewModel.clearBin()
-                            viewModel.loadMedia()
-                        }
-                    }
-                },
+                onDeleteConfirmed = { viewModel.deleteBinItems(binItems) },
                 onItemTap = { item ->
                     fullscreenGalleryItems = binItems.map { GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO") }
                     fullscreenInitialIndex = binItems.indexOf(item).coerceAtLeast(0)
@@ -239,20 +220,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 currentRetentionDays = viewModel.prefs.retentionDays,
                 binCount = binCount,
                 onRetentionChanged = { days -> viewModel.prefs.retentionDays = days },
-                onEmptyBin = {
-                    val uris = viewModel.getUrisForDeletion()
-                    if (uris.isNotEmpty()) {
-                        val intent = MediaDeletionHandler.getDeletionIntent(context, uris)
-                        if (intent != null) {
-                            deleteLauncher.launch(
-                                androidx.activity.result.IntentSenderRequest.Builder(intent.intentSender).build()
-                            )
-                        } else {
-                            MediaDeletionHandler.deleteMediaDirectly(context, uris)
-                            viewModel.clearBin()
-                        }
-                    }
-                },
+                onEmptyBin = { viewModel.deleteBinItems(binItems) },
                 onBack = { navController.popBackStack() }
             )
         }

@@ -17,5 +17,11 @@ data class BinItemEntity(
     val retentionMode: String = "SESSION", // SESSION or TIMED
     val width: Int = 0,
     val height: Int = 0,
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    /**
+     * True once cleanup has selected this row for permanent removal. The file is
+     * only removed after the user confirms the system delete dialog; the row is
+     * dropped only after that confirmation succeeds.
+     */
+    val pendingDeletion: Boolean = false
 )
