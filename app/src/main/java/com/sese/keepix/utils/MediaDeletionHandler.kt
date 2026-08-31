@@ -74,9 +74,13 @@ object MediaDeletionHandler {
 
             for (uri in uris) {
                 val isConfirmedMissing = try {
-                    val found = context.contentResolver.query(uri, projection, null, null, null)
-                        ?.use { it.moveToFirst() } ?: false
-                    !found
+                    // A null cursor is a provider-side failure (dead/restarting
+                    // MediaProvider, unmounted volume), not proof the row is gone —
+                    // only an actual cursor with zero rows proves that. So `null`
+                    // must fall through to `false` (-> existing), same as a failed
+                    // query, not be treated as "confirmed missing".
+                    context.contentResolver.query(uri, projection, null, null, null)
+                        ?.use { !it.moveToFirst() } ?: false
                 } catch (e: SecurityException) {
                     // Can't prove absence — scoped/partial access, not "file is gone".
                     if (BuildConfig.DEBUG) {
@@ -87,6 +91,16 @@ object MediaDeletionHandler {
                     // Malformed URI / stale provider — same reasoning: not proof of absence.
                     if (BuildConfig.DEBUG) {
                         Log.w(TAG, "URI not queryable (invalid): $uri", e)
+                    }
+                    false
+                } catch (e: Exception) {
+                    // Any other failure (e.g. a wedged MediaProvider throwing
+                    // DeadObjectException/RuntimeException) must not escape this
+                    // suspend function and crash the caller's coroutine, and must
+                    // not be treated as proof of absence either. Fail safe on both
+                    // axes: swallow it and route the URI to `existing`.
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "URI not queryable (unexpected failure): $uri", e)
                     }
                     false
                 }
