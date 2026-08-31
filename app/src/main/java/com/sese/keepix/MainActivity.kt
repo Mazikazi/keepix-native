@@ -3,10 +3,12 @@ package com.sese.keepix
 import android.app.Activity
 import android.Manifest
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -17,6 +19,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.app.ActivityCompat
@@ -35,19 +39,59 @@ import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.utils.MediaDeletionHandler
 
+private const val TAG = "MainActivity"
+
+/**
+ * Caps how many URIs go into a single `MediaStore.createDeleteRequest` call.
+ * That call makes a synchronous Binder transaction into MediaProvider; an
+ * unbounded batch risks `TransactionTooLargeException` on a very large bin.
+ * Any remainder stays marked pending in the DB and is picked up on the next
+ * pass once this batch resolves (see the deletion `LaunchedEffect` below).
+ */
+private const val MAX_DELETE_REQUEST_BATCH = 100
+
+/** The media permission(s) this app needs to request, version-gated. */
+private fun requiredMediaPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+    } else {
+        // WRITE_EXTERNAL_STORAGE is not in the manifest (scoped storage +
+        // createDeleteRequest cover deletion instead) — requesting it here
+        // would make Android report it denied and
+        // `permissions.entries.all { it.value }` would never be true on
+        // API 30-32, the floor of minSdk 30.
+        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
 /**
  * Whether the app currently holds the media read permission(s) it needs.
  * Pulled out so both the initial state and the `ON_RESUME` recheck (for
  * returning from system Settings) share one source of truth.
  */
-private fun checkMediaPermission(context: Context): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
-    } else {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+private fun checkMediaPermission(context: Context): Boolean =
+    requiredMediaPermissions().all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
+
+/**
+ * Unwraps a possibly-wrapped [Context] to find the [Activity] hosting it, if
+ * any. `LocalContext.current` is the Activity directly in this app today, but
+ * a plain `as? Activity` is fragile if that context is ever provided wrapped
+ * (e.g. a test harness or a future `ContextThemeWrapper`) — a silent `null`
+ * there would make permanent-denial detection misfire on the very first
+ * request.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
+
+/** Saves/restores the in-flight delete-request id set across process death. */
+private val DeletionInFlightSaver: Saver<List<Long>?, LongArray> = Saver(
+    save = { it?.toLongArray() ?: LongArray(0) },
+    restore = { if (it.isEmpty()) null else it.toList() }
+)
 
 class MainActivity : ComponentActivity() {
 
@@ -77,11 +121,26 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     var fullscreenInitialIndex by remember { mutableIntStateOf(0) }
     var fullscreenSource by remember { mutableStateOf("swipe") } // swipe, bin, kept
 
+    val activity = remember(context) { context.findActivity() }
+
     // Permission state
     var hasPermission by remember { mutableStateOf(checkMediaPermission(context)) }
     var isPermanentlyDenied by remember { mutableStateOf(false) }
 
-    val activity = context as? Activity
+    // Ids of the request currently awaiting a result from the system delete
+    // dialog. Doubles as the in-flight guard against a double-launch (see the
+    // deletion LaunchedEffect below). rememberSaveable so a configuration
+    // change or process death while the dialog is showing doesn't drop it and
+    // silently swallow the eventual RESULT_OK/CANCELED.
+    var deletionInFlightIds by rememberSaveable(stateSaver = DeletionInFlightSaver) {
+        mutableStateOf<List<Long>?>(null)
+    }
+
+    // Bumped on every ON_RESUME so the deletion effect below always gets a
+    // fresh chance to run when the app returns to the foreground: it retries a
+    // request that was skipped while backgrounded (see below) and gives the
+    // stuck-guard recovery below something to react to.
+    var resumeTick by remember { mutableIntStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -108,7 +167,39 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                hasPermission = checkMediaPermission(context)
+                val granted = checkMediaPermission(context)
+                hasPermission = granted
+                if (granted) {
+                    isPermanentlyDenied = false
+                } else if (isPermanentlyDenied) {
+                    // Only ever CLEARS a stale permanent-denial flag here, never
+                    // sets one: shouldShowRequestPermissionRationale is also
+                    // false before the very first request has ever been made,
+                    // which includes this same check at the app's very first
+                    // ON_RESUME — treating that as proof of permanent denial
+                    // would strand a first-run user on "Open Settings" before
+                    // they ever saw the permission dialog.
+                    val shouldShowRationale = activity != null && requiredMediaPermissions().any {
+                        ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+                    }
+                    if (shouldShowRationale) {
+                        isPermanentlyDenied = false
+                    }
+                }
+
+                resumeTick++
+
+                // If a delete request's system dialog launch was silently
+                // dropped (e.g. background-activity-start restrictions while
+                // this Activity was stopped), its result callback never runs
+                // and this guard would otherwise suppress every future delete
+                // prompt for the rest of the process. The normal path always
+                // clears it from the launcher callback, which fires before
+                // ON_RESUME whenever a dialog actually completed — so if it's
+                // still set here, that dialog never actually appeared.
+                if (deletionInFlightIds != null) {
+                    deletionInFlightIds = null
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -121,24 +212,8 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
     }
 
-    // Batch deletion: turns viewModel.pendingDeletionUris into a system delete
-    // confirmation. Keyed on BOTH pendingDeletionUris and promptedThisSession —
-    // keying on the list alone would miss a re-arm (Empty Bin -> Cancel -> Empty
-    // Bin again) since the list's *content* doesn't change when deleteBinItems
-    // re-marks the same rows.
     val pendingDeletionUris by viewModel.pendingDeletionUris.collectAsState()
     val promptedThisSession by viewModel.promptedThisSession.collectAsState()
-
-    // Ids of the request currently awaiting a result from the system dialog.
-    // Doubles as the in-flight guard: filterExistingUris is a suspend call, so
-    // there's an async gap between the effect firing and the IntentSender
-    // actually launching. If the key set changes during that gap (e.g. a second
-    // Empty Bin tap marks more rows before the first request resolves),
-    // LaunchedEffect cancels and restarts this block — this flag, which survives
-    // that restart because it's held in `remember` state outside the effect,
-    // stops the restarted block from firing a second system dialog on top of
-    // one that's already showing.
-    var deletionInFlightIds by remember { mutableStateOf<List<Long>?>(null) }
 
     val deleteResultLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
@@ -150,34 +225,86 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 viewModel.confirmDeletion(ids)
             } else {
                 viewModel.deferDeletion(ids)
+                // A separate, explicit delete request may have marked more
+                // rows pending while this dialog was open (blocked from
+                // launching its own prompt by the in-flight guard above).
+                // deferDeletion just unconditionally re-armed
+                // promptedThisSession for its OWN (now un-marked) ids; left
+                // alone that would also suppress this newer, never-shown
+                // batch until the user acts again. Detect it and re-open the
+                // prompt immediately.
+                val shownIds = ids.toSet()
+                val hasUnshownItems = pendingDeletionUris.any { it.id !in shownIds }
+                if (hasUnshownItems) {
+                    viewModel.rearmPrompt()
+                }
             }
         }
     }
 
-    LaunchedEffect(pendingDeletionUris, promptedThisSession) {
+    // Batch deletion: turns viewModel.pendingDeletionUris into a system delete
+    // confirmation. Keyed on:
+    //  - pendingDeletionUris + promptedThisSession: keying on the list alone
+    //    would miss a re-arm (Empty Bin -> Cancel -> Empty Bin again) since
+    //    the list's *content* doesn't change when deleteBinItems re-marks the
+    //    same rows.
+    //  - hasPermission: without read access filterExistingUris can't verify
+    //    anything (every URI fails-safe into `existing`), and a user who
+    //    regains permission should have any pending rows processed without
+    //    needing an unrelated state change first.
+    //  - resumeTick: re-evaluates on every foreground return, so a request
+    //    skipped while backgrounded (below) gets retried.
+    LaunchedEffect(pendingDeletionUris, promptedThisSession, hasPermission, resumeTick) {
+        if (!hasPermission) return@LaunchedEffect
         if (deletionInFlightIds != null) return@LaunchedEffect
         if (pendingDeletionUris.isEmpty() || promptedThisSession) return@LaunchedEffect
 
-        val items = pendingDeletionUris
-        val uris = items.map { Uri.parse(it.mediaUri) }
-        val filterResult = MediaDeletionHandler.filterExistingUris(context, uris)
+        // Parse each mediaUri once and carry the pair through both buckets,
+        // instead of re-parsing per lookup.
+        val itemUris = pendingDeletionUris.map { it to Uri.parse(it.mediaUri) }
+        val filterResult = MediaDeletionHandler.filterExistingUris(context, itemUris.map { it.second })
 
         val missingUris = filterResult.missing.toSet()
-        val missingIds = items.filter { Uri.parse(it.mediaUri) in missingUris }.map { it.id }
+        val missingIds = itemUris.filter { it.second in missingUris }.map { it.first.id }
         if (missingIds.isNotEmpty()) {
             viewModel.confirmDeletion(missingIds)
         }
 
         val existingUris = filterResult.existing.toSet()
-        val existingItems = items.filter { Uri.parse(it.mediaUri) in existingUris }
-        if (existingItems.isNotEmpty()) {
-            val existingIds = existingItems.map { it.id }
+        val existingItems = itemUris.filter { it.second in existingUris }
+        if (existingItems.isEmpty()) return@LaunchedEffect
+
+        // Don't show system UI while backgrounded: a launch here can be
+        // silently dropped by background-activity-start restrictions, which
+        // would otherwise leave deletionInFlightIds stuck with no result ever
+        // arriving. resumeTick re-fires this whole effect on every foreground
+        // return, so this batch is retried as soon as the app is visible.
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+
+        val batch = existingItems.take(MAX_DELETE_REQUEST_BATCH)
+        val batchIds = batch.map { it.first.id }
+        try {
             val intentSender = MediaDeletionHandler.getDeletionIntent(
                 context,
-                existingItems.map { Uri.parse(it.mediaUri) }
+                batch.map { it.second }
             ).intentSender
-            deletionInFlightIds = existingIds
+            deletionInFlightIds = batchIds
             deleteResultLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+        } catch (e: Exception) {
+            // createDeleteRequest makes a synchronous call into MediaProvider
+            // and can throw (unresolvable URI, a wedged provider returning a
+            // null result bundle, TransactionTooLargeException on an
+            // oversized batch). Uncaught, that would propagate out of this
+            // LaunchedEffect and kill the process — and since
+            // performLaunchCleanup marks expired rows on every launch, that's
+            // a launch crash-loop with no in-app recovery. Defer instead:
+            // un-mark the batch and surface it as a normal, recoverable error.
+            Log.e(TAG, "Failed to build/launch the system delete request", e)
+            deletionInFlightIds = null
+            viewModel.deferDeletion(batchIds)
+            viewModel.reportError("Couldn't open the delete confirmation. Please try again.")
         }
     }
 

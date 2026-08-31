@@ -300,6 +300,27 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Re-arms the delete confirmation prompt without touching any rows. For
+     * the case where a separate, explicit delete request marked additional
+     * rows pending while a previous request's system dialog was still open:
+     * that dialog resolving (via [deferDeletion]) unconditionally re-arms
+     * [promptedThisSession] for its OWN ids, which would otherwise also
+     * suppress this newer, never-shown batch until the user acts again.
+     */
+    fun rearmPrompt() {
+        _promptedThisSession.value = false
+    }
+
+    /**
+     * Surfaces an arbitrary user-visible error, for failures that originate
+     * outside this ViewModel (e.g. the Activity failing to build or launch the
+     * system delete confirmation).
+     */
+    fun reportError(message: String) {
+        _error.value = message
+    }
+
     fun unkeepItem(item: KeptItemEntity) {
         viewModelScope.launch {
             keptItemDao.delete(item)
