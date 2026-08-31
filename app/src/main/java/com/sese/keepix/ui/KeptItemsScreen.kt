@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -86,7 +85,7 @@ fun KeptItemsScreen(
                         Text(
                             text = "NO KEEPS YET!",
                             style = MaterialTheme.typography.displaySmall,
-                            color = com.sese.keepix.ui.theme.KeepLime,
+                            color = KeepGreen,
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
@@ -102,10 +101,9 @@ fun KeptItemsScreen(
                     contentPadding = PaddingValues(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    itemsIndexed(items) { i, keptItem ->
+                    items(items) { keptItem ->
                         KeptGridItem(
                             item = keptItem,
-                            accentIndex = i,
                             onClick = { onItemTap(keptItem) },
                             onLongClick = { showUnkeepConfirmation = keptItem }
                         )
@@ -146,7 +144,6 @@ fun KeptItemsScreen(
 @Composable
 private fun KeptGridItem(
     item: KeptItemEntity,
-    accentIndex: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -154,12 +151,7 @@ private fun KeptGridItem(
         modifier = Modifier
             .padding(4.dp)
             .aspectRatio(1f)
-            .maxBox(
-                shape = RoundedCornerShape(12.dp),
-                background = Color.Black.copy(alpha = 0.4f),
-                borderColor = com.sese.keepix.ui.theme.AccentsAt(accentIndex),
-                borderWidth = 2.dp,
-            )
+            .glassmorphism(cornerRadius = 12.dp)
             .clickable(onClick = onClick)
     ) {
         AsyncImage(
