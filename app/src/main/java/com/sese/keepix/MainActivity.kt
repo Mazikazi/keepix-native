@@ -90,10 +90,20 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     }
 
     // TASK 3 wires the system delete dialog here: a StartIntentSenderForResult
-    // launcher plus a LaunchedEffect on viewModel.pendingDeletionUris that builds
-    // one MediaStore.createDeleteRequest over the marked URIs and calls
-    // viewModel.confirmDeletion(ids) on RESULT_OK / viewModel.deferDeletion()
-    // otherwise. Until then, delete actions only mark rows as pending.
+    // launcher plus a LaunchedEffect keyed on BOTH viewModel.pendingDeletionUris
+    // AND viewModel.promptedThisSession (collected as state — both are StateFlows
+    // for exactly this reason) that, when the list is non-empty and not yet
+    // prompted:
+    //   1. runs MediaDeletionHandler.filterExistingUris (suspend; safe to call from
+    //      here) over the marked URIs;
+    //   2. immediately calls viewModel.confirmDeletion on the ids behind the
+    //      `missing` bucket — those are MediaStore-confirmed absent, so dropping
+    //      the row needs no dialog;
+    //   3. if `existing` is non-empty, builds one MediaStore.createDeleteRequest
+    //      over it and launches the IntentSender, then calls
+    //      viewModel.confirmDeletion(ids) with those same ids on RESULT_OK, or
+    //      viewModel.deferDeletion(ids) with those same ids otherwise.
+    // Until this is wired up, delete actions only mark rows as pending.
 
     // Collect state
     val mediaItems by viewModel.mediaItems.collectAsState()

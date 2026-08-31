@@ -3,7 +3,6 @@ package com.sese.keepix.data
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -48,11 +47,8 @@ class MediaRepository(private val context: Context) {
 
             val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
 
-            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-            } else {
-                MediaStore.Files.getContentUri("external")
-            }
+            // minSdk is 30, so Build.VERSION_CODES.Q is always satisfied here.
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
             context.contentResolver.query(
                 collection,

@@ -50,18 +50,28 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Bin rows that cleanup has marked for permanent removal. The Activity turns
      * these into a single `MediaStore.createDeleteRequest` and calls back into
-     * [confirmDeletion] on `RESULT_OK` or [deferDeletion] on anything else.
+     * [confirmDeletion] with the same ids on `RESULT_OK`, or [deferDeletion] with
+     * the same ids on anything else.
      */
     val pendingDeletionUris: StateFlow<List<BinItemEntity>> = binItemDao.getPendingDeletion()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _promptedThisSession = MutableStateFlow(false)
+
     /**
-     * Set once the user has been shown — and has dismissed or cancelled — the
-     * system delete dialog in this process. Prevents re-prompting in a loop.
-     * In-memory only: it resets on the next launch.
+     * True once the user has been shown — and has dismissed or cancelled — the
+     * system delete dialog for the current [pendingDeletionUris] set in this
+     * process. Prevents re-prompting in a loop. In-memory only: it resets on the
+     * next launch.
+     *
+     * Exposed as a [StateFlow], not a plain `var`: a Compose `LaunchedEffect`
+     * observing [pendingDeletionUris] needs this value in its key list to notice
+     * when [deleteBinItems] re-arms the prompt for a set of ids whose *content*
+     * hasn't changed (e.g. Empty Bin -> Cancel -> Empty Bin again on the same
+     * bin). A plain field read from a composable would not trigger recomposition
+     * on its own and that re-arm would go unnoticed until the next process launch.
      */
-    var promptedThisSession: Boolean = false
-        private set
+    val promptedThisSession: StateFlow<Boolean> = _promptedThisSession.asStateFlow()
 
     // Kept state
     val keptItems: StateFlow<List<KeptItemEntity>> = keptItemDao.getAllItems()
@@ -235,7 +245,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteBinItems(items: List<BinItemEntity>) {
         if (items.isEmpty()) return
         // An explicit user request re-arms the prompt even after an earlier cancel.
-        promptedThisSession = false
+        _promptedThisSession.value = false
         viewModelScope.launch {
             binItemDao.markPendingDeletion(items.map { it.id })
         }
@@ -245,20 +255,44 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      * Drops the Room rows for items whose file deletion the system dialog actually
      * confirmed. This is the ONLY place a bin row is removed for deletion, and it
      * must only be called on `RESULT_OK`.
+     *
+     * This runs *after* the files are already gone, so a failure here is the worst
+     * case in the whole flow: rows would survive as tombstones pointing at dead
+     * URIs. It is wrapped so that failure surfaces through [_error] instead of
+     * crashing the coroutine and leaving the bin silently full of broken thumbnails.
      */
     fun confirmDeletion(ids: List<Long>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            binItemDao.deleteByIds(ids)
+            try {
+                binItemDao.deleteByIds(ids)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove confirmed-deleted items from the bin", e)
+                _error.value = "Some deleted items could not be removed from the bin."
+            }
         }
     }
 
     /**
-     * The user cancelled the system delete dialog. The rows stay marked and stay
-     * in the bin; we just stop re-prompting until the next launch.
+     * The user cancelled the system delete dialog for [ids]. Nothing was deleted,
+     * so those rows are un-marked back to a normal bin item rather than left
+     * latched as `pendingDeletion` forever — otherwise every future launch would
+     * re-show the system delete dialog for them with no way out short of
+     * restoring items one by one. [promptedThisSession] is still set so an
+     * in-flight recomposition doesn't immediately re-show the dialog before the
+     * un-mark is observed.
      */
-    fun deferDeletion() {
-        promptedThisSession = true
+    fun deferDeletion(ids: List<Long>) {
+        _promptedThisSession.value = true
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                binItemDao.unmarkPendingDeletion(ids)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to un-mark deferred bin items", e)
+                _error.value = "Some items could not be restored to the bin."
+            }
+        }
     }
 
     fun unkeepItem(item: KeptItemEntity) {
