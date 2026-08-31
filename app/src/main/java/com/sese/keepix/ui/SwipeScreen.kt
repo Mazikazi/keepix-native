@@ -61,7 +61,10 @@ fun SwipeScreen(
     keptCount: Int,
     deletedCount: Int,
     error: String? = null,
-    onErrorDismiss: () -> Unit = {}
+    onErrorDismiss: () -> Unit = {},
+    // Plumbed through for Task 5's empty-state-vs-loading treatment; not
+    // otherwise consumed here.
+    isLoading: Boolean = false
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val swipeThreshold = with(LocalDensity.current) { (screenWidth * 0.4f).toPx() }

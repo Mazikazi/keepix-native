@@ -244,10 +244,15 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun deleteBinItems(items: List<BinItemEntity>) {
         if (items.isEmpty()) return
-        // An explicit user request re-arms the prompt even after an earlier cancel.
-        _promptedThisSession.value = false
         viewModelScope.launch {
             binItemDao.markPendingDeletion(items.map { it.id })
+            // An explicit user request re-arms the prompt even after an earlier
+            // cancel. This must happen AFTER markPendingDeletion returns: a
+            // LaunchedEffect keyed on both pendingDeletionUris and
+            // promptedThisSession could otherwise observe promptedThisSession
+            // flip to false while pendingDeletionUris still reflects the old
+            // (pre-mark) set, showing a dialog with a stale item count.
+            _promptedThisSession.value = false
         }
     }
 

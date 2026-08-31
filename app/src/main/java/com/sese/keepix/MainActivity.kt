@@ -1,6 +1,8 @@
 package com.sese.keepix
 
+import android.app.Activity
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -9,13 +11,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -26,6 +33,21 @@ import com.sese.keepix.ui.theme.DarkBackground
 import com.sese.keepix.ui.theme.KeepixTheme
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
+import com.sese.keepix.utils.MediaDeletionHandler
+
+/**
+ * Whether the app currently holds the media read permission(s) it needs.
+ * Pulled out so both the initial state and the `ON_RESUME` recheck (for
+ * returning from system Settings) share one source of truth.
+ */
+private fun checkMediaPermission(context: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+    } else {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -56,19 +78,10 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     var fullscreenSource by remember { mutableStateOf("swipe") } // swipe, bin, kept
 
     // Permission state
-    var hasPermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
-            } else {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-            }
-        )
-    }
-
+    var hasPermission by remember { mutableStateOf(checkMediaPermission(context)) }
     var isPermanentlyDenied by remember { mutableStateOf(false) }
-    var permissionRequestCount by remember { mutableIntStateOf(0) }
+
+    val activity = context as? Activity
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -76,11 +89,30 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         val granted = permissions.entries.all { it.value }
         hasPermission = granted
         if (!granted) {
-            permissionRequestCount++
-            if (permissionRequestCount >= 2) {
-                isPermanentlyDenied = true
+            // Once the system will no longer show a rationale for ANY of the
+            // requested permissions, the user has hit "Deny & don't ask again"
+            // (or an admin policy blocks it) and only Settings can recover —
+            // this mirrors the platform's own recommended detection instead of
+            // guessing from a request counter.
+            val shouldShowRationale = activity != null && permissions.keys.any {
+                ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+            }
+            isPermanentlyDenied = !shouldShowRationale
+        }
+    }
+
+    // Returning from system Settings resumes the Activity but doesn't recreate
+    // it, so re-check permission state on every ON_RESUME rather than only once
+    // at first composition.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = checkMediaPermission(context)
             }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(hasPermission) {
@@ -89,21 +121,65 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
     }
 
-    // TASK 3 wires the system delete dialog here: a StartIntentSenderForResult
-    // launcher plus a LaunchedEffect keyed on BOTH viewModel.pendingDeletionUris
-    // AND viewModel.promptedThisSession (collected as state — both are StateFlows
-    // for exactly this reason) that, when the list is non-empty and not yet
-    // prompted:
-    //   1. runs MediaDeletionHandler.filterExistingUris (suspend; safe to call from
-    //      here) over the marked URIs;
-    //   2. immediately calls viewModel.confirmDeletion on the ids behind the
-    //      `missing` bucket — those are MediaStore-confirmed absent, so dropping
-    //      the row needs no dialog;
-    //   3. if `existing` is non-empty, builds one MediaStore.createDeleteRequest
-    //      over it and launches the IntentSender, then calls
-    //      viewModel.confirmDeletion(ids) with those same ids on RESULT_OK, or
-    //      viewModel.deferDeletion(ids) with those same ids otherwise.
-    // Until this is wired up, delete actions only mark rows as pending.
+    // Batch deletion: turns viewModel.pendingDeletionUris into a system delete
+    // confirmation. Keyed on BOTH pendingDeletionUris and promptedThisSession —
+    // keying on the list alone would miss a re-arm (Empty Bin -> Cancel -> Empty
+    // Bin again) since the list's *content* doesn't change when deleteBinItems
+    // re-marks the same rows.
+    val pendingDeletionUris by viewModel.pendingDeletionUris.collectAsState()
+    val promptedThisSession by viewModel.promptedThisSession.collectAsState()
+
+    // Ids of the request currently awaiting a result from the system dialog.
+    // Doubles as the in-flight guard: filterExistingUris is a suspend call, so
+    // there's an async gap between the effect firing and the IntentSender
+    // actually launching. If the key set changes during that gap (e.g. a second
+    // Empty Bin tap marks more rows before the first request resolves),
+    // LaunchedEffect cancels and restarts this block — this flag, which survives
+    // that restart because it's held in `remember` state outside the effect,
+    // stops the restarted block from firing a second system dialog on top of
+    // one that's already showing.
+    var deletionInFlightIds by remember { mutableStateOf<List<Long>?>(null) }
+
+    val deleteResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val ids = deletionInFlightIds
+        deletionInFlightIds = null
+        if (ids != null) {
+            if (result.resultCode == Activity.RESULT_OK) {
+                viewModel.confirmDeletion(ids)
+            } else {
+                viewModel.deferDeletion(ids)
+            }
+        }
+    }
+
+    LaunchedEffect(pendingDeletionUris, promptedThisSession) {
+        if (deletionInFlightIds != null) return@LaunchedEffect
+        if (pendingDeletionUris.isEmpty() || promptedThisSession) return@LaunchedEffect
+
+        val items = pendingDeletionUris
+        val uris = items.map { Uri.parse(it.mediaUri) }
+        val filterResult = MediaDeletionHandler.filterExistingUris(context, uris)
+
+        val missingUris = filterResult.missing.toSet()
+        val missingIds = items.filter { Uri.parse(it.mediaUri) in missingUris }.map { it.id }
+        if (missingIds.isNotEmpty()) {
+            viewModel.confirmDeletion(missingIds)
+        }
+
+        val existingUris = filterResult.existing.toSet()
+        val existingItems = items.filter { Uri.parse(it.mediaUri) in existingUris }
+        if (existingItems.isNotEmpty()) {
+            val existingIds = existingItems.map { it.id }
+            val intentSender = MediaDeletionHandler.getDeletionIntent(
+                context,
+                existingItems.map { Uri.parse(it.mediaUri) }
+            ).intentSender
+            deletionInFlightIds = existingIds
+            deleteResultLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+        }
+    }
 
     // Collect state
     val mediaItems by viewModel.mediaItems.collectAsState()
@@ -113,6 +189,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val keptItems by viewModel.keptItems.collectAsState()
     val deletedCount by viewModel.deletedCount.collectAsState()
     val error by viewModel.error.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
 
     // Determine start destination
     val startDestination = when {
@@ -134,10 +211,14 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                             )
                         )
                     } else {
+                        // WRITE_EXTERNAL_STORAGE is not in the manifest (scoped
+                        // storage + createDeleteRequest cover deletion instead) —
+                        // requesting it here would make Android report it denied
+                        // and `permissions.entries.all { it.value }` would never
+                        // be true on API 30-32, the floor of minSdk 30.
                         permissionLauncher.launch(
                             arrayOf(
-                                Manifest.permission.READ_EXTERNAL_STORAGE,
-                                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                Manifest.permission.READ_EXTERNAL_STORAGE
                             )
                         )
                     }
@@ -182,8 +263,8 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onNavigateToSettings = { navController.navigate("settings") },
                 onCardBoundsChanged = { bounds -> selectedMediaBounds = bounds },
                 onTapCard = { item ->
-                    fullscreenGalleryItems = emptyList()
-                    fullscreenInitialIndex = 0
+                    fullscreenGalleryItems = mediaItems.map { GalleryItem(it.uri, it.isVideo) }
+                    fullscreenInitialIndex = mediaItems.indexOf(item).coerceAtLeast(0)
                     fullscreenSource = "swipe"
                     navController.navigate("fullscreen/${Uri.encode(item.uri.toString())}/${item.isVideo}/false")
                 },
@@ -191,7 +272,8 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 keptCount = keptItemCount,
                 deletedCount = deletedCount,
                 error = error,
-                onErrorDismiss = { viewModel.clearError() }
+                onErrorDismiss = { viewModel.clearError() },
+                isLoading = isLoading
             )
         }
 
