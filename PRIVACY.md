@@ -31,23 +31,22 @@ All decisions happen on your device. No media files are copied, uploaded, or tra
 
 | Permission | Purpose |
 |---|---|
-| `READ_MEDIA_IMAGES` (API 33+) / `READ_EXTERNAL_STORAGE` (API ≤32) | Read your photo library to display cards |
+| `READ_MEDIA_IMAGES` (API 33+) / `READ_EXTERNAL_STORAGE` (API ≤32, `maxSdkVersion=32`) | Read your photo library to display cards |
 | `READ_MEDIA_VIDEO` (API 33+) | Read your video library to display cards |
 
-These are **read-only**. Keepix never requests `WRITE_EXTERNAL_STORAGE` or `MANAGE_EXTERNAL_STORAGE`.
+These are **read-only**. Keepix never requests `WRITE_EXTERNAL_STORAGE` or `MANAGE_EXTERNAL_STORAGE`. Keepix's minimum supported Android version is API 30 (Android 11); Android 10 (API 29) and earlier are no longer supported.
 
 ---
 
 ## 4. Data Stored On Your Device
 
-Keepix uses a local Room (SQLite) database and DataStore preferences. Tables:
+Keepix uses a local Room (SQLite) database and a SharedPreferences file. Tables:
 
 | Table | Columns | Purpose |
 |---|---|---|
 | `bin_items` | `mediaId`, `mediaUri`, `displayName`, `mediaType`, `dateTaken`, `deletedAt`, `expiryAt`, `sessionId`, `retentionMode`, `width`, `height`, `durationMs` | Recycle Bin items pending permanent deletion |
 | `kept_items` | `mediaId`, `mediaUri`, `displayName`, `mediaType`, `dateTaken`, `keptAt`, `width`, `height`, `durationMs` | Items you chose to keep (prevents re-showing) |
-| `app_stats` | Future use — not populated in v1.0 | — |
-| DataStore prefs | `retentionDays`, `onboardingComplete`, `fullscreenTutorialComplete` | User settings |
+| SharedPreferences | `retentionDays`, `batchSize`, `onboardingComplete`, `lastSessionId`, `fullscreenTutorialComplete` | User settings |
 
 **No media bytes are stored.** Only URIs and metadata.
 

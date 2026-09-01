@@ -6,12 +6,9 @@ import androidx.compose.ui.graphics.Color
 val DarkBackground = Color(0xFF0A0A0F)
 val DarkSurface = Color(0xFF141420)
 val DarkSurfaceVariant = Color(0xFF1E1E2E)
-val DarkCard = Color(0xFF1A1A2E)
 
 // Glass effect colors
 val GlassBorder = Color(0x40FFFFFF)       // 25% white
-val GlassOverlay = Color(0x14FFFFFF)      // 8% white
-val GlassSurface = Color(0xE0141420)      // 88% dark
 
 // Accent colors
 val KeepGreen = Color(0xFF4CAF50)

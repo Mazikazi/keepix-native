@@ -318,6 +318,9 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         _isLoading.value = true
         try {
             fetchBatch()
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error loading next batch", e)
+            _error.value = "An unexpected error occurred"
         } finally {
             batchLoadInFlight = false
             _isLoading.value = false

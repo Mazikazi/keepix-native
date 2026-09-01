@@ -1,4 +1,7 @@
 # Project-wide Gradle settings.
+# Copy this file to gradle.properties (already gitignored) and fill in real
+# release-signing values. Never commit gradle.properties itself.
+#
 # IDE (e.g. Android Studio) users:
 # Gradle settings configured through the IDE *will override*
 # any settings specified in this file.

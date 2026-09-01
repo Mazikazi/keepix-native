@@ -7,7 +7,7 @@
 | `versionCode` | Integer, monotonically increasing (1, 2, 3...) |
 | `versionName` | SemVer: `MAJOR.MINOR.PATCH` (e.g., `1.0.0`, `1.0.1`, `1.1.0`) |
 
-**Current:** `versionCode = 1`, `versionName = "1.0"`
+**Current:** `versionCode = 1`, `versionName = "1.0.0"`
 
 ## Build Artifact
 
@@ -18,7 +18,7 @@
 
 ## Signing
 
-- **Keystore:** `~/keystores/keepix-release.jks` (alias `keepix`, validity 25y)
+- **Keystore:** `~/keystores/keepix-release.jks` (alias `keepix-release`, validity 25y)
 - **Secrets** in `gradle.properties` (gitignored):
   - `KEEPIX_KEYSTORE_FILE`
   - `KEEPIX_KEYSTORE_PASSWORD`
@@ -36,7 +36,7 @@
 
 ## Hotfix Flow
 
-1. Fix bug on `main`
+1. Fix bug on `master`
 2. `versionCode += 1`, `versionName = "1.0.1"` (patch bump)
 3. `./gradlew clean bundleRelease`
 4. Upload new AAB to **same staged rollout** (Play Console replaces artifact)

@@ -67,6 +67,15 @@ android {
     sourceSets.getByName("androidTest") {
         assets.srcDir("$projectDir/schemas")
     }
+    lint {
+        // lifecycle 2.9.0's NonNullableMutableLiveDataDetector is built
+        // against a newer lint API than AGP 8.7.3 bundles, so it crashes with
+        // IncompatibleClassChangeError instead of merely warning (verified by
+        // running `./gradlew lintDebug` directly). This project uses
+        // StateFlow exclusively and contains zero LiveData, so the check is
+        // inapplicable here regardless.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 ksp {

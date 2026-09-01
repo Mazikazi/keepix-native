@@ -34,7 +34,7 @@
 # Keepix: Room entities package (BinItemEntity, KeptItemEntity, etc.)
 -keep class com.sese.keepix.db.**Entity { *; }
 
-# Keepix: Preferences DataStore
+# Keepix: SharedPreferences wrapper
 -keep class com.sese.keepix.data.KeepixPreferences { *; }
 
 # OWASP: Strip debug/verbose/info/warn logging from release

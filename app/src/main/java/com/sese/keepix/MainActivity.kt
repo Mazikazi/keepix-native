@@ -150,9 +150,18 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // actually launched). Lets a cancel tell "more chunks of this same run
     // are still queued" from "the user marked genuinely new rows while the
     // dialog was open" -- only the latter should re-arm the prompt
-    // immediately (see the launcher callback below). Also rememberSaveable
-    // so it survives recreation alongside deletionInFlightIds.
-    var deletionRunIds by rememberSaveable(stateSaver = DeletionInFlightSaver) {
+    // immediately (see the launcher callback below).
+    //
+    // Deliberately plain `remember`, NOT rememberSaveable: unlike
+    // deletionInFlightIds (capped at MAX_DELETE_REQUEST_BATCH), this can hold
+    // every eligible id in a single run -- tens of thousands of rows for a
+    // large bulk-delete -- which would push a Bundle-backed
+    // onSaveInstanceState close to the Binder transaction limit. Losing this
+    // across process death only degrades precision: the `(runIds ?: ids)`
+    // fallback below then compares against just the last launched chunk
+    // instead of the whole run, which can cause one extra, harmless re-prompt
+    // for a multi-chunk batch cancelled mid-recreation -- never data loss.
+    var deletionRunIds by remember {
         mutableStateOf<List<Long>?>(null)
     }
 
@@ -223,11 +232,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // very first ON_RESUME of this composition: that one is
                 // LifecycleRegistry's synchronous replay (see hasResumedOnce's
                 // declaration), not a real foreground return. Letting it
-                // through would (a) null out deletionInFlightIds/
-                // deletionRunIds the instant rememberSaveable restores them on
-                // an Activity recreated while the system dialog is showing --
-                // discarding the eventual RESULT_OK/CANCELED before the
-                // launcher below even registers to receive it -- and (b) bump
+                // through would (a) null out deletionInFlightIds the instant
+                // rememberSaveable restores it on an Activity recreated while
+                // the system dialog is showing -- discarding the eventual
+                // RESULT_OK/CANCELED before the launcher below even registers
+                // to receive it -- and (b) bump
                 // resumeTick on every cold start for no reason, cancelling and
                 // restarting the deletion effect's first (expensive,
                 // per-pending-URI) filterExistingUris pass.

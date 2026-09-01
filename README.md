@@ -1,6 +1,6 @@
 # Keepix — Android Native
 
-[![Android API](https://img.shields.io/badge/API-29%20%2B-brightgreen.svg?style=flat)](https://android-sdk.is)
+[![Android API](https://img.shields.io/badge/API-30%20%2B-brightgreen.svg?style=flat)](https://android-sdk.is)
 [![OWASP Mobile MASVS](https://img.shields.io/badge/OWASP-MASVS%20Compliant-blue.svg)](https://mas.owasp.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -78,8 +78,10 @@ com.sese.keepix/
 │   └── KeepixViewModel.kt        # Global State holder & Business logic trigger
 │
 └── utils/
-    ├── MediaDeletionHandler.kt   # System deletion triggers & callbacks
-    └── SessionCleanupWorker.kt   # WorkManager task for cleaning old sessions
+    ├── MediaDeletionHandler.kt   # MediaStore.createDeleteRequest + existence filtering
+    └── SessionCleanupWorker.kt   # WorkManager: daily sweep that MARKS expired timed items
+                                  # (pendingDeletion) — files are only removed after the
+                                  # user confirms the system delete dialog
 ```
 
 ---
@@ -106,6 +108,7 @@ Tracks items pending permanent deletion from the device system gallery.
 | `width` | `Int` | Media width in pixels |
 | `height` | `Int` | Media height in pixels |
 | `durationMs` | `Long` | Asset duration (for video playback, `0` for images) |
+| `pendingDeletion` | `Boolean` | `true` once cleanup has selected this row for permanent removal. The file is only removed after the user confirms the system delete dialog (`MediaStore.createDeleteRequest`); the row is dropped only after that confirmation succeeds — never before |
 
 ### 2. `kept_items` (Kept Assets)
 Prevents swiped-right images from appearing back in the active queue.
@@ -130,18 +133,17 @@ Prevents swiped-right images from appearing back in the active queue.
 This project has been thoroughly audited and hardened in compliance with the **OWASP Mobile Application Security Verification Standard (MASVS)** and the **OWASP Mobile Top 10**.
 
 * **Data Leakage Mitigation (MASVS-STORAGE):** `android:allowBackup` is explicitly set to `false` in `AndroidManifest.xml` to prevent unauthorized ADB data extraction of Room databases or user configurations.
-* **Production Log Stripping (MASVS-CODE):** Built-in ProGuard optimization rules (`proguard-rules.pro`) strip all `android.util.Log` debug and error logging from release builds:
+* **Verbose/Debug Log Stripping (MASVS-CODE):** Built-in ProGuard optimization rules (`proguard-rules.pro`) strip `android.util.Log`'s `d`/`v`/`i`/`w` calls from release builds:
   ```proguard
   -assumenosideeffects class android.util.Log {
-      public static boolean isLoggable(java.lang.String, int);
-      public static int v(...);
       public static int d(...);
+      public static int v(...);
       public static int i(...);
       public static int w(...);
-      public static int e(...);
   }
   ```
-* **Secure Exception Handling:** Stack trace prints (`printStackTrace()`) are completely eliminated in favor of safe, debug-guarded `BuildConfig.DEBUG` log wrapper calls, preventing runtime diagnostics leakage in production.
+  `Log.e` is deliberately **not** stripped — error logs are kept in release builds to support crash triage, and are called unguarded throughout the codebase (e.g. `MediaRepository.kt`, `MainActivity.kt`). A handful of lower-severity, non-error paths (permission/URI-lookup fallbacks in `MediaDeletionHandler.kt`) additionally gate their `Log.w` calls behind `BuildConfig.DEBUG` so they only fire in debug builds.
+* **Secure Exception Handling:** The codebase contains no `printStackTrace()` calls — exceptions are always routed through `android.util.Log` instead, never printed directly to stderr.
 * **SQL Injection Prevention:** Highly secure database access using Android Room. All SQL commands utilize strictly parameterized `@Query` structures, rendering SQL injection vectors impossible.
 * **No Network Exposure:** The application contains **no internet permissions** (`android.permission.INTERNET`) in its manifest. It operates completely offline, ensuring data privacy and zero cloud leakage.
 
