@@ -59,6 +59,11 @@ fun SwipeScreen(
     onCardBoundsChanged: (MediaTransitionBounds) -> Unit = {},
     binCount: Int,
     keptCount: Int,
+    // Session-scoped count of items kept this session (Defect 12) — used only
+    // in the empty-state summary below, alongside the also-session-scoped
+    // deletedCount. keptCount above stays the all-time DB total; it's correct
+    // as-is for the kept button's badge.
+    sessionKeptCount: Int,
     deletedCount: Int,
     error: String? = null,
     onErrorDismiss: () -> Unit = {},
@@ -273,7 +278,7 @@ fun SwipeScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "You kept $keptCount and deleted $deletedCount photos",
+                    text = "You kept $sessionKeptCount and deleted $deletedCount photos",
                     color = TextSecondary,
                     textAlign = TextAlign.Center
                 )

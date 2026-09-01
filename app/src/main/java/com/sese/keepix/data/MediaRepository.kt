@@ -1,8 +1,10 @@
 package com.sese.keepix.data
 
+import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -25,37 +27,76 @@ data class MediaItem(
 
 class MediaRepository(private val context: Context) {
 
-    suspend fun getMediaItems(): List<MediaItem> = withContext(Dispatchers.IO) {
+    private val projection = arrayOf(
+        MediaStore.Files.FileColumns._ID,
+        MediaStore.Files.FileColumns.MEDIA_TYPE,
+        MediaStore.Files.FileColumns.DATE_ADDED,
+        MediaStore.Files.FileColumns.DISPLAY_NAME,
+        MediaStore.Files.FileColumns.WIDTH,
+        MediaStore.Files.FileColumns.HEIGHT,
+        MediaStore.Files.FileColumns.DURATION
+    )
+
+    private val selection =
+        "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+
+    private val selectionArgs = arrayOf(
+        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+        MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
+    )
+
+    // minSdk is 30, so Build.VERSION_CODES.Q is always satisfied here.
+    private val collection: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+
+    /**
+     * Total number of images + videos in the device library. Used by the caller
+     * to know when pagination has reached the end.
+     */
+    suspend fun getMediaCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.query(collection, arrayOf(MediaStore.Files.FileColumns._ID), selection, selectionArgs, null)
+                ?.use { cursor -> cursor.count } ?: 0
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Permission denied accessing media", e)
+            throw MediaAccessException("Permission denied. Please grant media access.", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to count media items", e)
+            throw MediaAccessException("Failed to load media: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Reads a single window of [limit] rows starting at [offset] from the full,
+     * DATE_ADDED-descending device library. [offset] counts rows in the
+     * underlying cursor, not items surviving any caller-side filtering — the
+     * caller is responsible for re-requesting more rows if it filters some of
+     * this page out.
+     *
+     * Uses the Bundle-based `ContentResolver.query` overload (API 26+, always
+     * available at minSdk 30) so `QUERY_ARG_OFFSET`/`QUERY_ARG_LIMIT` and the
+     * sort order can be expressed together — mixing a raw `sortOrder` string
+     * argument with Bundle query args is not supported by the platform.
+     */
+    suspend fun getMediaPage(offset: Int, limit: Int): List<MediaItem> = withContext(Dispatchers.IO) {
         val mediaList = mutableListOf<MediaItem>()
 
         try {
-            val projection = arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.MEDIA_TYPE,
-                MediaStore.Files.FileColumns.DATE_ADDED,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.WIDTH,
-                MediaStore.Files.FileColumns.HEIGHT,
-                MediaStore.Files.FileColumns.DURATION
-            )
-
-            val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
-            val selectionArgs = arrayOf(
-                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
-            )
-
-            val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
-
-            // minSdk is 30, so Build.VERSION_CODES.Q is always satisfied here.
-            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            val queryArgs = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                putString(
+                    ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                    "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
+                )
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
+            }
 
             context.contentResolver.query(
                 collection,
                 projection,
-                selection,
-                selectionArgs,
-                sortOrder
+                queryArgs,
+                null
             )?.use { cursor ->
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
                 val typeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
@@ -99,7 +140,7 @@ class MediaRepository(private val context: Context) {
             Log.e(TAG, "Permission denied accessing media", e)
             throw MediaAccessException("Permission denied. Please grant media access.", e)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load media items", e)
+            Log.e(TAG, "Failed to load media page", e)
             throw MediaAccessException("Failed to load media: ${e.message}", e)
         }
 

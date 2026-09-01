@@ -384,6 +384,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val keptItemCount by viewModel.keptItemCount.collectAsState()
     val keptItems by viewModel.keptItems.collectAsState()
     val deletedCount by viewModel.deletedCount.collectAsState()
+    val sessionKeptCount by viewModel.sessionKeptCount.collectAsState()
     val error by viewModel.error.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
@@ -453,6 +454,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 },
                 binCount = binCount,
                 keptCount = keptItemCount,
+                sessionKeptCount = sessionKeptCount,
                 deletedCount = deletedCount,
                 error = error,
                 onErrorDismiss = { viewModel.clearError() },
