@@ -1,15 +1,21 @@
 package com.sese.keepix.ui
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,34 +40,108 @@ fun RecycleBinScreen(
     isSessionMode: Boolean,
     onRestore: (BinItemEntity) -> Unit,
     onDeleteConfirmed: () -> Unit,
+    onDeleteSelected: (List<BinItemEntity>) -> Unit,
     onItemTap: (BinItemEntity) -> Unit,
     onBack: () -> Unit
 ) {
     var showEmptyConfirmation by remember { mutableStateOf(false) }
 
+    // Multi-select state. Ids only (not entities) so a row that mutates or is
+    // recreated elsewhere doesn't desync the "is this selected" check; the
+    // LaunchedEffect below prunes against the live `items` list so a cleanup
+    // pass removing rows out from under an open selection can't leave a
+    // dangling id that later resolves to nothing (or, worse, a different row
+    // that reused the id).
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var showDeleteSelectedConfirmation by remember { mutableStateOf(false) }
+
+    // Keep the selection in sync with the live list: a cleanup/expiry pass or
+    // a restore from elsewhere can remove bin rows while this screen is open.
+    // Drop any selected id that no longer exists, and fall out of selection
+    // mode entirely if that empties the selection -- otherwise the "N
+    // selected" bar would linger at 0 with both actions doing nothing.
+    LaunchedEffect(items) {
+        val currentIds = items.mapTo(mutableSetOf()) { it.id }
+        if (selectedIds.any { it !in currentIds }) {
+            selectedIds = selectedIds.intersect(currentIds)
+        }
+        if (selectionMode && selectedIds.isEmpty()) {
+            selectionMode = false
+        }
+    }
+
+    fun exitSelectionMode() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    // Back exits selection mode instead of leaving the screen.
+    BackHandler(enabled = selectionMode) {
+        exitSelectionMode()
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { Text("Recycle Bin", color = TextPrimary) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = TextPrimary
-                        )
-                    }
-                },
-                actions = {
-                    if (items.isNotEmpty()) {
-                        TextButton(onClick = { showEmptyConfirmation = true }) {
-                            Text("Empty Bin", color = DeleteRed, fontWeight = FontWeight.Medium)
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedIds.size} selected", color = TextPrimary) },
+                    navigationIcon = {
+                        IconButton(onClick = { exitSelectionMode() }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Cancel selection",
+                                tint = TextPrimary
+                            )
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = {
+                                // Reuse the existing per-item restore path for each
+                                // selected row rather than adding a batch ViewModel
+                                // method -- restoreItem() is cheap (a single-row
+                                // delete + splice) and already handles its own
+                                // coroutine per call.
+                                items.filter { it.id in selectedIds }.forEach { onRestore(it) }
+                                exitSelectionMode()
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Restore selected", tint = TextPrimary)
+                        }
+                        IconButton(
+                            onClick = { showDeleteSelectedConfirmation = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete selected", tint = DeleteRed)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Recycle Bin", color = TextPrimary) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = TextPrimary
+                            )
+                        }
+                    },
+                    actions = {
+                        if (items.isNotEmpty()) {
+                            TextButton(onClick = { showEmptyConfirmation = true }) {
+                                Text("Empty Bin", color = DeleteRed, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                )
+            }
         }
     ) { padding ->
         Box(
@@ -118,10 +198,32 @@ fun RecycleBinScreen(
                         contentPadding = PaddingValues(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(items) { binItem ->
+                        items(items, key = { it.id }) { binItem ->
+                            val isSelected = binItem.id in selectedIds
                             BinGridItem(
                                 item = binItem,
-                                onClick = { onItemTap(binItem) }
+                                isSelected = isSelected,
+                                selectionMode = selectionMode,
+                                onClick = {
+                                    if (selectionMode) {
+                                        selectedIds = if (isSelected) {
+                                            selectedIds - binItem.id
+                                        } else {
+                                            selectedIds + binItem.id
+                                        }
+                                    } else {
+                                        onItemTap(binItem)
+                                    }
+                                },
+                                onLongClick = {
+                                    selectionMode = true
+                                    selectedIds = if (isSelected) {
+                                        selectedIds - binItem.id
+                                    } else {
+                                        selectedIds + binItem.id
+                                    }
+                                },
+                                onRestore = { onRestore(binItem) }
                             )
                         }
                     }
@@ -157,19 +259,54 @@ fun RecycleBinScreen(
             containerColor = DarkSurface
         )
     }
+
+    // Delete-selected confirmation dialog
+    if (showDeleteSelectedConfirmation) {
+        val count = selectedIds.size
+        AlertDialog(
+            onDismissRequest = { showDeleteSelectedConfirmation = false },
+            title = { Text("Delete Selected?", color = TextPrimary) },
+            text = {
+                Text(
+                    "Permanently delete $count item${if (count == 1) "" else "s"}? This cannot be undone.",
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteSelectedConfirmation = false
+                    onDeleteSelected(items.filter { it.id in selectedIds })
+                    exitSelectionMode()
+                }) {
+                    Text("Delete", color = DeleteRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteSelectedConfirmation = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BinGridItem(
     item: BinItemEntity,
-    onClick: () -> Unit
+    isSelected: Boolean,
+    selectionMode: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onRestore: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .padding(4.dp)
             .aspectRatio(1f)
             .glassmorphism(cornerRadius = 12.dp)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         AsyncImage(
             model = Uri.parse(item.mediaUri),
@@ -177,6 +314,14 @@ private fun BinGridItem(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
+
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AccentPurple.copy(alpha = 0.35f))
+            )
+        }
 
         // Glass overlay at bottom for badge
         Box(
@@ -188,7 +333,7 @@ private fun BinGridItem(
         ) {
             Text(
                 text = getBadgeText(item),
-                color = Color.White,
+                color = getBadgeColor(item),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
@@ -210,6 +355,40 @@ private fun BinGridItem(
                     color = Color.White,
                     fontSize = 10.sp,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        if (selectionMode) {
+            // Decorative only (onCheckedChange = null): the whole tile is
+            // already clickable above and toggles this same selection, so a
+            // second, independent click target here would just be a second
+            // way to do the identical thing and could desync from it.
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = null,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(2.dp),
+                colors = CheckboxDefaults.colors(
+                    checkedColor = AccentPurple,
+                    uncheckedColor = Color.White
+                )
+            )
+        } else {
+            IconButton(
+                onClick = onRestore,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(2.dp)
+                    .size(28.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), shape = CircleShape)
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = "Restore ${item.displayName}",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }

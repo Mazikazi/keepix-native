@@ -1,6 +1,7 @@
 package com.sese.keepix.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sese.keepix.BuildConfig
 import com.sese.keepix.ui.components.*
 import com.sese.keepix.ui.theme.*
 import kotlin.math.roundToInt
@@ -30,6 +32,12 @@ fun SettingsScreen(
 ) {
     var sliderValue by remember { mutableFloatStateOf(currentRetentionDays.toFloat()) }
     var showEmptyConfirmation by remember { mutableStateOf(false) }
+    var showPrivacyPolicy by remember { mutableStateOf(false) }
+
+    if (showPrivacyPolicy) {
+        PrivacyPolicyScreen(onBack = { showPrivacyPolicy = false })
+        return
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -220,7 +228,20 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Version", color = TextPrimary)
-                            Text("1.0.0", color = TextSecondary)
+                            Text(BuildConfig.VERSION_NAME, color = TextSecondary)
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPrivacyPolicy = true },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Privacy Policy", color = TextPrimary)
+                            Text("›", color = TextMuted, fontSize = 18.sp)
                         }
                     }
                 }

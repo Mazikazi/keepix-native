@@ -480,6 +480,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 isSessionMode = viewModel.prefs.isSessionMode,
                 onRestore = { item -> viewModel.restoreItem(item) },
                 onDeleteConfirmed = { viewModel.deleteBinItems(binItems) },
+                onDeleteSelected = { selected -> viewModel.deleteBinItems(selected) },
                 onItemTap = { item ->
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.BIN.routeKey}"
