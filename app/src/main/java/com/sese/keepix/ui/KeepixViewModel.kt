@@ -415,29 +415,56 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markForDeletion(mediaItem: MediaItem) {
         viewModelScope.launch {
-            val retentionMode = if (prefs.isSessionMode) "SESSION" else "TIMED"
-            val expiryAt = prefs.getExpiryTimestamp()
-
-            binItemDao.insert(
-                BinItemEntity(
-                    mediaId = mediaItem.id,
-                    mediaUri = mediaItem.uri.toString(),
-                    displayName = mediaItem.displayName,
-                    mediaType = if (mediaItem.isVideo) "VIDEO" else "IMAGE",
-                    dateTaken = mediaItem.dateAdded * 1000,
-                    deletedAt = System.currentTimeMillis(),
-                    expiryAt = expiryAt,
-                    sessionId = prefs.currentSessionId,
-                    retentionMode = retentionMode,
-                    width = mediaItem.width,
-                    height = mediaItem.height,
-                    durationMs = mediaItem.durationMs
-                )
-            )
-            binMediaIds = binMediaIds + mediaItem.id
-            _deletedCount.value++
-            removeSwipedItem(mediaItem)
+            addToBin(mediaItem)
         }
+    }
+
+    /**
+     * Kept-grid "DELETE" (fullscreen viewer, KEPT mode): drop the kept row and
+     * move the item into the bin.
+     *
+     * Deliberately one coroutine rather than `unkeepItem()` followed by
+     * `markForDeletion()`: those are two independent `viewModelScope.launch`es
+     * that both suspend on Room, so their resumption order is not guaranteed.
+     * If the splice from `unkeepItem` landed after `addToBin`'s
+     * `removeSwipedItem`, the item would end up in the bin *and* back in the
+     * swipe queue at the same time. Sequencing them here makes that impossible.
+     *
+     * The file on disk is untouched — this only marks the item binned, exactly
+     * as a left-swipe does.
+     */
+    fun deleteKeptItem(item: KeptItemEntity) {
+        viewModelScope.launch {
+            keptItemDao.delete(item)
+            keptMediaIds = keptMediaIds - item.mediaId
+            addToBin(item.toMediaItem())
+        }
+    }
+
+    /** Bin-insert half of [markForDeletion], shared with [deleteKeptItem]. */
+    private suspend fun addToBin(mediaItem: MediaItem) {
+        val retentionMode = if (prefs.isSessionMode) "SESSION" else "TIMED"
+        val expiryAt = prefs.getExpiryTimestamp()
+
+        binItemDao.insert(
+            BinItemEntity(
+                mediaId = mediaItem.id,
+                mediaUri = mediaItem.uri.toString(),
+                displayName = mediaItem.displayName,
+                mediaType = if (mediaItem.isVideo) "VIDEO" else "IMAGE",
+                dateTaken = mediaItem.dateAdded * 1000,
+                deletedAt = System.currentTimeMillis(),
+                expiryAt = expiryAt,
+                sessionId = prefs.currentSessionId,
+                retentionMode = retentionMode,
+                width = mediaItem.width,
+                height = mediaItem.height,
+                durationMs = mediaItem.durationMs
+            )
+        )
+        binMediaIds = binMediaIds + mediaItem.id
+        _deletedCount.value++
+        removeSwipedItem(mediaItem)
     }
 
     fun keepMedia(mediaItem: MediaItem) {

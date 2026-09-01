@@ -130,7 +130,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // Gallery state for fullscreen viewer
     var fullscreenGalleryItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var fullscreenInitialIndex by remember { mutableIntStateOf(0) }
-    var fullscreenSource by remember { mutableStateOf("swipe") } // swipe, bin, kept
 
     val activity = remember(context) { context.findActivity() }
 
@@ -462,8 +461,9 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onTapCard = { item ->
                     fullscreenGalleryItems = mediaItems.map { GalleryItem(it.uri, it.isVideo) }
                     fullscreenInitialIndex = mediaItems.indexOf(item).coerceAtLeast(0)
-                    fullscreenSource = "swipe"
-                    navController.navigate("fullscreen/${Uri.encode(item.uri.toString())}/${item.isVideo}/false")
+                    navController.navigate(
+                        "fullscreen/${Uri.encode(item.uri.toString())}/${item.isVideo}/${ViewerMode.SWIPE.routeKey}"
+                    )
                 },
                 binCount = binCount,
                 keptCount = keptItemCount,
@@ -487,8 +487,9 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onItemTap = { item ->
                     fullscreenGalleryItems = binItems.map { GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO") }
                     fullscreenInitialIndex = binItems.indexOf(item).coerceAtLeast(0)
-                    fullscreenSource = "bin"
-                    navController.navigate("fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/true")
+                    navController.navigate(
+                        "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.BIN.routeKey}"
+                    )
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -501,8 +502,9 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onItemTap = { item ->
                     fullscreenGalleryItems = keptItems.map { GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO") }
                     fullscreenInitialIndex = keptItems.indexOf(item).coerceAtLeast(0)
-                    fullscreenSource = "kept"
-                    navController.navigate("fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/false")
+                    navController.navigate(
+                        "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.KEPT.routeKey}"
+                    )
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -519,48 +521,71 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
 
         composable(
-            route = "fullscreen/{mediaUri}/{isVideo}/{isBinMode}",
+            // The mode travels as its ViewerMode.routeKey rather than the old
+            // isBinMode Boolean: a Boolean cannot express the third ("kept
+            // grid") case the action bar needs to label its buttons for. Kept
+            // as a nav argument (not just composition state) so it survives
+            // process death while the viewer is on top.
+            route = "fullscreen/{mediaUri}/{isVideo}/{mode}",
             arguments = listOf(
                 navArgument("mediaUri") { type = NavType.StringType },
                 navArgument("isVideo") { type = NavType.BoolType },
-                navArgument("isBinMode") { type = NavType.BoolType }
+                navArgument("mode") { type = NavType.StringType }
             )
         ) { backStackEntry ->
             val mediaUri = Uri.parse(backStackEntry.arguments?.getString("mediaUri") ?: "")
             val isVideo = backStackEntry.arguments?.getBoolean("isVideo") ?: false
-            val isBinMode = backStackEntry.arguments?.getBoolean("isBinMode") ?: false
-
-            // Track current gallery index so page indicator updates
-            var currentGalleryIndex by remember { mutableIntStateOf(fullscreenInitialIndex) }
+            val mode = ViewerMode.fromRouteKey(backStackEntry.arguments?.getString("mode"))
 
             FullscreenViewer(
                 mediaUri = mediaUri,
                 isVideo = isVideo,
-                isBinMode = isBinMode,
+                mode = mode,
                 transitionBounds = selectedMediaBounds,
                 tutorialComplete = viewModel.prefs.fullscreenTutorialComplete,
                 onTutorialDismiss = { viewModel.prefs.fullscreenTutorialComplete = true },
-                onKeepOrRestore = {
-                    if (isBinMode) {
-                        val binItem = binItems.find { it.mediaUri == mediaUri.toString() }
-                        binItem?.let { viewModel.restoreItem(it) }
+                // Both callbacks take the URI of the item actually on screen.
+                // In gallery mode that is whichever page the pager has settled
+                // on, NOT the item that was originally tapped -- paging to
+                // another bin entry and hitting RESTORE must restore that
+                // entry, not the one the route was built from.
+                onKeepOrRestore = { uri ->
+                    val key = uri.toString()
+                    when (mode) {
+                        ViewerMode.BIN ->
+                            binItems.find { it.mediaUri == key }
+                                ?.let { viewModel.restoreItem(it) }
+                        ViewerMode.KEPT ->
+                            keptItems.find { it.mediaUri == key }
+                                ?.let { viewModel.unkeepItem(it) }
+                        ViewerMode.SWIPE ->
+                            mediaItems.find { it.uri == uri }
+                                ?.let { viewModel.keepMedia(it) }
                     }
                     navController.popBackStack()
                 },
-                onDeleteOrDeleteNow = {
-                    if (isBinMode) {
-                        val binItem = binItems.find { it.mediaUri == mediaUri.toString() }
-                        binItem?.let { viewModel.deleteBinItems(listOf(it)) }
-                    } else {
-                        val mediaItem = mediaItems.find { it.uri == mediaUri }
-                        mediaItem?.let { viewModel.markForDeletion(it) }
+                onDeleteOrDeleteNow = { uri ->
+                    val key = uri.toString()
+                    when (mode) {
+                        // DELETE NOW only *marks* the row pending; the actual
+                        // file deletion still goes through the Activity's
+                        // system-confirmation flow below, so no Room row is
+                        // dropped for an unconfirmed file deletion.
+                        ViewerMode.BIN ->
+                            binItems.find { it.mediaUri == key }
+                                ?.let { viewModel.deleteBinItems(listOf(it)) }
+                        ViewerMode.KEPT ->
+                            keptItems.find { it.mediaUri == key }
+                                ?.let { viewModel.deleteKeptItem(it) }
+                        ViewerMode.SWIPE ->
+                            mediaItems.find { it.uri == uri }
+                                ?.let { viewModel.markForDeletion(it) }
                     }
                     navController.popBackStack()
                 },
                 onDismiss = { navController.popBackStack() },
                 galleryItems = fullscreenGalleryItems,
-                initialIndex = currentGalleryIndex,
-                onGalleryIndexChanged = { newIndex -> currentGalleryIndex = newIndex }
+                initialIndex = fullscreenInitialIndex
             )
         }
     }
