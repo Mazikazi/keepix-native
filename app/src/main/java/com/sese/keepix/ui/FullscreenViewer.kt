@@ -29,6 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+// Explicit: the material3.* wildcard also exposes an (internal) SliderRange
+// .isSpecified, which otherwise wins and fails to resolve for Offset.
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -111,11 +114,22 @@ private const val DOUBLE_TAP_WINDOW_MS = 250L
 private const val VIDEO_POLL_INTERVAL_MS = 200L
 
 /**
- * Vertical room reserved at the bottom of a media page for the viewer's own
- * chrome (page indicator + action bar), so the video control pill stacks above
- * it instead of underneath it.
+ * How long a horizontal drag on a zoomable page is withheld from the pager, to
+ * cover the skew between the two fingers of a pinch landing.
  */
-private val VIDEO_CONTROLS_BOTTOM_INSET = 140.dp
+private const val PAGER_HANDOFF_GRACE_MS = 40L
+
+/**
+ * Vertical room reserved at the bottom of a media page for the viewer's own
+ * chrome, so the video control pill stacks above it instead of underneath it.
+ *
+ * Two values because the gallery carries a page indicator above the action bar
+ * and the single-item path does not -- one shared constant made the pill float
+ * needlessly high on the single-item screen. Still hand-tuned rather than
+ * measured; see the report's concerns.
+ */
+private val VIDEO_CONTROLS_INSET_SINGLE = 132.dp
+private val VIDEO_CONTROLS_INSET_GALLERY = 176.dp
 
 @Composable
 fun FullscreenViewer(
@@ -204,10 +218,19 @@ fun FullscreenViewer(
 
     LaunchedEffect(mediaUri) { opened = true }
 
-    // Controls auto-fade after inactivity. Restarted whenever the controls are
-    // re-shown or something is interacted with (button press, scrub).
-    LaunchedEffect(showControls, interactionTick, closing) {
-        if (showControls && !closing) {
+    // Auto-fade for the *transient* chrome only — the top bar and the video
+    // control pill. AppFlow §Screen 5's layout annotates only the top bar with
+    // "fades out after 2s of inactivity"; the bottom action bar carries no such
+    // annotation, and TRD §3.3 scopes its 3s fade to the video controls. The
+    // action bar therefore stays put (see `actionsVisible` below) — it is the
+    // only route to RESTORE, so hiding it would bury a core feature.
+    //
+    // `entryComplete` is a key so the timer starts when the chrome actually
+    // becomes visible rather than at first composition, which was costing the
+    // top bar the 260ms of the entry transition.
+    val entryComplete = transitionProgress >= 1f
+    LaunchedEffect(showControls, interactionTick, closing, entryComplete) {
+        if (showControls && !closing && entryComplete) {
             delay(CONTROLS_FADE_DELAY_MS)
             showControls = false
         }
@@ -329,7 +352,11 @@ fun FullscreenViewer(
         // bar. Rendered here rather than inside GalleryPager/SingleItemViewer so
         // it sits outside the media container's dismiss/fly-off transform and
         // stays put while the media itself animates away.
-        if (showControls && transitionProgress >= 1f && !closing) {
+        //
+        // Deliberately NOT gated on showControls — see the auto-fade effect
+        // above. The indicator rides along with the bar so the cluster's height
+        // never changes underneath it.
+        if (entryComplete && !closing) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -520,8 +547,12 @@ private fun ViewerAction(
  * Pan is clamped to the *rendered image's* edges, not the viewport's: with
  * `ContentScale.Fit` a portrait photo on a landscape screen has letterbox bars,
  * and clamping to the viewport would let the user drag empty space into view.
- * [contentAspect] is filled in from Coil's decoded drawable; until it arrives
- * the viewport is used as a conservative stand-in.
+ *
+ * The aspect ratio arrives late, from Coil's decoded drawable. Until then
+ * [fittedSize] falls back to the viewport, which *over*-estimates the pannable
+ * area for a letterboxed photo — an optimistic stand-in, not a conservative
+ * one, so a pan or double-tap in that window can briefly reach into the
+ * letterbox bars. [updateContentAspect] re-clamps the moment the real ratio lands.
  */
 @Stable
 private class ZoomState {
@@ -535,6 +566,20 @@ private class ZoomState {
 
     /** Intrinsic width/height of the decoded image; 0 until known. */
     var contentAspect by mutableFloatStateOf(0f)
+        private set
+
+    /**
+     * Records the decoded image's real aspect ratio and immediately re-clamps
+     * the current offset against it. Without the re-clamp, a pan or double-tap
+     * performed before Coil finished decoding would leave an offset that the
+     * (now stricter) bounds disallow, and it would stay wrong until the user's
+     * next pan happened to re-clamp it.
+     */
+    fun updateContentAspect(aspect: Float) {
+        if (aspect <= 0f || aspect == contentAspect) return
+        contentAspect = aspect
+        offset = clamp(offset, scale)
+    }
 
     /**
      * Deliberately a hair above 1f: float drift from a pinch that ends near 1x
@@ -567,11 +612,21 @@ private class ZoomState {
     }
 
     /**
-     * Applies one pinch frame. [centroid] is in viewport coordinates; the
-     * content point under it stays under it, which is what makes a pinch feel
-     * anchored rather than centre-locked.
+     * Applies one pinch frame, keeping the content point under the fingers
+     * under the fingers.
+     *
+     * [centroid] MUST be the *previous* frame's centroid
+     * (`calculateCentroid(useCurrent = false)`), because [pan] is already
+     * `currentCentroid - previousCentroid`. Anchoring on the current centroid
+     * *and* adding pan double-counts the movement by `pan * (1 - new/old)` per
+     * frame — sub-pixel at a steady zoom, but visible drift on a fast pinch.
+     *
+     * Derivation: the content point under the previous centroid is
+     * `p = (focus - offset) / old`; requiring it to land under the current
+     * centroid gives `offset' = focus + pan - (focus - offset) * (new / old)`.
      */
     fun transform(zoomFactor: Float, centroid: Offset, pan: Offset) {
+        if (!centroid.isSpecified || !pan.isSpecified) return
         val old = scale
         val new = (old * zoomFactor).coerceIn(MIN_SCALE, MAX_SCALE)
         val focus = centroid - center
@@ -655,7 +710,7 @@ private fun GalleryPager(
             onDragEnd = { _, _ -> onDismissEnd() },
             onTap = onTap,
             onInteraction = onInteraction,
-            videoControlsBottomPadding = VIDEO_CONTROLS_BOTTOM_INSET,
+            videoControlsBottomPadding = VIDEO_CONTROLS_INSET_GALLERY,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -723,54 +778,49 @@ private fun SingleItemViewer(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                translationX = swipeOffsetX + animatedFlyOffX
-                translationY = swipeOffsetY + animatedFlyOffY
-                if (isFlyingOff.value && flyOffOffsetY < 0f) {
-                    alpha = 1f - (abs(animatedFlyOffY) / screenHeightPx).coerceIn(0f, 1f)
-                }
+    ViewerMediaContent(
+        item = GalleryItem(mediaUri, isVideo),
+        isActive = true,
+        controlsVisible = controlsVisible,
+        // No pager here, so this viewer keeps its own left/right
+        // keep/delete swipes.
+        allowHorizontalDrag = true,
+        onZoomChanged = onZoomChanged,
+        onDrag = { dx, dy ->
+            if (!isFlyingOff.value && transitionProgress >= 1f) {
+                swipeOffsetX = dx
+                swipeOffsetY = dy
             }
-    ) {
-        ViewerMediaContent(
-            item = GalleryItem(mediaUri, isVideo),
-            isActive = true,
-            controlsVisible = controlsVisible,
-            // No pager here, so this viewer keeps its own left/right
-            // keep/delete swipes.
-            allowHorizontalDrag = true,
-            onZoomChanged = onZoomChanged,
-            onDrag = { dx, dy ->
-                if (!isFlyingOff.value && transitionProgress >= 1f) {
-                    swipeOffsetX = dx
-                    swipeOffsetY = dy
-                }
-            },
-            onDragEnd = { _, _ ->
-                if (!isFlyingOff.value) {
-                    val swipedLeft = swipeOffsetX < -swipeThreshold
-                    val swipedRight = swipeOffsetX > swipeThreshold
-                    val swipedUp = swipeOffsetY < -swipeThreshold
+        },
+        onDragEnd = { _, _ ->
+            if (!isFlyingOff.value) {
+                val swipedLeft = swipeOffsetX < -swipeThreshold
+                val swipedRight = swipeOffsetX > swipeThreshold
+                val swipedUp = swipeOffsetY < -swipeThreshold
 
-                    when {
-                        swipedLeft -> triggerFlyOff(-1f)
-                        swipedRight -> triggerFlyOff(1f)
-                        swipedUp -> triggerFlyOff(0f, isVertical = true)
-                        else -> {
-                            swipeOffsetX = 0f
-                            swipeOffsetY = 0f
-                        }
+                when {
+                    swipedLeft -> triggerFlyOff(-1f)
+                    swipedRight -> triggerFlyOff(1f)
+                    swipedUp -> triggerFlyOff(0f, isVertical = true)
+                    else -> {
+                        swipeOffsetX = 0f
+                        swipeOffsetY = 0f
                     }
                 }
-            },
-            onTap = onShowControlsToggle,
-            onInteraction = onInteraction,
-            videoControlsBottomPadding = VIDEO_CONTROLS_BOTTOM_INSET,
-            modifier = Modifier.fillMaxSize()
-        )
-    }
+            }
+        },
+        onTap = onShowControlsToggle,
+        onInteraction = onInteraction,
+        videoControlsBottomPadding = VIDEO_CONTROLS_INSET_SINGLE,
+        modifier = Modifier.fillMaxSize(),
+        mediaTransform = {
+            translationX = swipeOffsetX + animatedFlyOffX
+            translationY = swipeOffsetY + animatedFlyOffY
+            if (isFlyingOff.value && flyOffOffsetY < 0f) {
+                alpha = 1f - (abs(animatedFlyOffY) / screenHeightPx).coerceIn(0f, 1f)
+            }
+        }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -811,7 +861,14 @@ private fun ViewerMediaContent(
     onTap: () -> Unit,
     onInteraction: () -> Unit,
     videoControlsBottomPadding: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Applied to the media surface ONLY, never to the video control pill.
+     * SingleItemViewer passes its keep/delete fly-off through here: wrapping
+     * this whole composable in that graphicsLayer instead would slide the
+     * scrubber off-screen along with the photo.
+     */
+    mediaTransform: (androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit)? = null
 ) {
     val zoomable = !item.isVideo
     val zoom = remember(item.uri) { ZoomState() }
@@ -852,6 +909,12 @@ private fun ViewerMediaContent(
      * [DOUBLE_TAP_WINDOW_MS] cancels that and zooms instead. The delay is why
      * a double tap does not first flash the controls on and off.
      */
+    /** Drops a queued single tap once the gesture turns out to be a drag/pinch. */
+    fun cancelPendingSingleTap() {
+        singleTapJob?.cancel()
+        singleTapJob = null
+    }
+
     fun onTapCompleted(position: Offset) {
         if (!zoomable) {
             // No double-tap zoom on video, so no reason to make the tap wait.
@@ -876,6 +939,10 @@ private fun ViewerMediaContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    if (mediaTransform != null) Modifier.graphicsLayer(mediaTransform)
+                    else Modifier
+                )
                 .onSizeChanged {
                     zoom.containerSize = Size(it.width.toFloat(), it.height.toFloat())
                 }
@@ -918,27 +985,49 @@ private fun ViewerMediaContent(
                                     reportedDrag = false
                                 }
                                 multiTouch = true
-                                moved = true
+                                if (!moved) {
+                                    moved = true
+                                    cancelPendingSingleTap()
+                                }
                                 zoom.transform(
                                     zoomFactor = event.calculateZoom(),
-                                    centroid = event.calculateCentroid(useCurrent = true),
+                                    // useCurrent = false: pan is already the
+                                    // centroid delta, so the anchor must be
+                                    // the PREVIOUS centroid (see transform).
+                                    centroid = event.calculateCentroid(useCurrent = false),
                                     pan = event.calculatePan()
                                 )
                                 pressed.forEach(PointerInputChange::consume)
                                 continue
                             }
 
-                            val change = pressed[0]
-
-                            // (2) One finger left over from a pinch: keep panning
-                            // rather than reinterpreting it as a fresh swipe.
+                            // (2) One finger left over from a pinch: keep
+                            // panning rather than reinterpreting it as a fresh
+                            // swipe. positionChange() is a per-pointer delta, so
+                            // it does not matter WHICH finger survived.
+                            //
+                            // Consumes unconditionally, including when the pinch
+                            // ended back at 1x: releasing the leftover finger to
+                            // the pager mid-gesture would page the gallery off
+                            // the back of a pinch, which is not what the latch
+                            // is supposed to mean.
                             if (multiTouch) {
                                 if (zoom.isZoomed) {
-                                    zoom.panBy(change.positionChange())
-                                    change.consume()
+                                    zoom.panBy(pressed[0].positionChange())
                                 }
+                                pressed.forEach(PointerInputChange::consume)
                                 continue
                             }
+
+                            // totalX/totalY are measured from `down`, so they are
+                            // only meaningful for that same pointer. pressed[0]
+                            // is NOT guaranteed to be it: on a video (never
+                            // zoomable, so the pinch branch above never latches)
+                            // putting two fingers down and lifting the first
+                            // would slide pressed[0] onto the second pointer and
+                            // produce a large spurious delta -- enough to clear
+                            // swipeThreshold and fire an unintended KEEP/DELETE.
+                            val change = pressed.firstOrNull { it.id == down.id } ?: break
 
                             totalX = change.position.x - down.position.x
                             totalY = change.position.y - down.position.y
@@ -948,6 +1037,10 @@ private fun ViewerMediaContent(
                             ) {
                                 decided = true
                                 moved = true
+                                // The gesture is a drag, not a tap: drop the
+                                // single-tap that would otherwise toggle the
+                                // controls 250ms into the drag.
+                                cancelPendingSingleTap()
                                 when {
                                     zoomable && zoom.isZoomed -> panning = true
                                     abs(totalY) > abs(totalX) -> draggingVertical = true
@@ -974,8 +1067,26 @@ private fun ViewerMediaContent(
                                         latestOnDrag(totalX, 0f)
                                         change.consume()
                                     }
-                                    // (4) Horizontal drag in the pager: leave it
-                                    // unconsumed so HorizontalPager takes it.
+                                    // (4) Horizontal drag the pager wants --
+                                    // but withhold it briefly on a zoomable
+                                    // page. If one finger crosses slop just
+                                    // before the second lands, releasing it
+                                    // immediately lets HorizontalPager claim
+                                    // and settle the drag; the pinch then
+                                    // starts on a page that is already moving,
+                                    // and the settle can land on the next page,
+                                    // whose activation resets the zoom the user
+                                    // was starting. Holding it for the width of
+                                    // a two-finger touch-down closes that
+                                    // window; paging is delayed by a frame or
+                                    // two at most, and not at all for video.
+                                    draggingHorizontal && zoomable &&
+                                        change.uptimeMillis - down.uptimeMillis <
+                                        PAGER_HANDOFF_GRACE_MS -> {
+                                        change.consume()
+                                    }
+                                    // (4) Otherwise leave it unconsumed so
+                                    // HorizontalPager takes it.
                                 }
                             }
                         }
@@ -1003,8 +1114,9 @@ private fun ViewerMediaContent(
                     onSuccess = { state ->
                         val d = state.result.drawable
                         if (d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
-                            zoom.contentAspect =
+                            zoom.updateContentAspect(
                                 d.intrinsicWidth.toFloat() / d.intrinsicHeight.toFloat()
+                            )
                         }
                     },
                     modifier = Modifier
@@ -1063,6 +1175,20 @@ private class VideoPlayerState {
      */
     var playWhenActive by mutableStateOf(true)
 
+    /**
+     * Whether this page is the one on screen.
+     *
+     * Written from `AndroidView`'s update block, which runs during
+     * applyChanges — i.e. *before* `MediaPlayer` can possibly finish preparing.
+     * That timing is the whole point: `onPrepared` fires hundreds of ms after
+     * the factory, long after the pause `LaunchedEffect` has already run and
+     * found nothing to pause (an unprepared VideoView reports `isPlaying ==
+     * false`). Without this flag to read at prepare time, an off-screen
+     * neighbour composed by `beyondViewportPageCount` would start itself,
+     * unmuted, and nothing would ever correct it because no effect key changes.
+     */
+    var isActivePage by mutableStateOf(false)
+
     fun applyVolume() {
         val v = if (isMuted) 0f else 1f
         player?.setVolume(v, v)
@@ -1119,15 +1245,20 @@ private fun VideoSurface(
                     state.player = player
                     state.durationMs = duration.coerceAtLeast(0)
                     // Fullscreen playback is audible by default — unlike the
-                    // swipe card's muted autoplay.
+                    // swipe card's muted autoplay. Which is exactly why the
+                    // isActivePage guard below matters: an unguarded start()
+                    // here plays a neighbouring page's audio over the visible
+                    // one.
                     state.applyVolume()
-                    if (state.playWhenActive) {
+                    if (state.playWhenActive && state.isActivePage) {
                         start()
                         state.isPlaying = true
                     }
                 }
                 setOnInfoListener { _, what, _ ->
-                    if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                    if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START &&
+                        state.isActivePage
+                    ) {
                         state.isPlaying = this@apply.isPlaying
                     }
                     true
@@ -1135,15 +1266,23 @@ private fun VideoSurface(
                 state.videoView = this
             }
         },
-        update = { }
+        // Runs during applyChanges, so isActivePage is correct well before
+        // onPrepared can fire, and is re-run whenever isActive changes.
+        update = { state.isActivePage = isActive }
     )
 
     // Only the visible page plays. `beyondViewportPageCount = 1` composes the
     // neighbours, so without this every adjacent video would autoplay at once.
     LaunchedEffect(isActive, state.videoView) {
         val vv = state.videoView ?: return@LaunchedEffect
+        state.isActivePage = isActive
         if (!isActive) {
-            if (vv.isPlaying) vv.pause()
+            // Unconditional, not `if (vv.isPlaying)`. VideoView.pause() sets
+            // mTargetState = STATE_PAUSED even when it is not yet in a playback
+            // state, so this also stops a not-yet-prepared player from
+            // auto-starting on prepare — defence in depth behind the
+            // isActivePage guard above.
+            vv.pause()
             state.isPlaying = false
         } else if (state.playWhenActive) {
             vv.start()
@@ -1153,10 +1292,11 @@ private fun VideoSurface(
 
     // Position polling (TRD §3.3). It is a LaunchedEffect, so it is cancelled
     // when the page leaves composition or playback stops — it cannot outlive
-    // the viewer or keep ticking against a released VideoView.
-    LaunchedEffect(state.videoView, state.isPlaying, state.isScrubbing) {
+    // the viewer or keep ticking against a released VideoView. Gated on
+    // isActivePage as well so an off-screen page neither plays nor polls.
+    LaunchedEffect(state.videoView, state.isPlaying, state.isScrubbing, state.isActivePage) {
         val vv = state.videoView ?: return@LaunchedEffect
-        while (state.isPlaying && !state.isScrubbing) {
+        while (state.isPlaying && !state.isScrubbing && state.isActivePage) {
             state.positionMs = vv.currentPosition.coerceAtLeast(0)
             if (state.durationMs <= 0) {
                 state.durationMs = vv.duration.coerceAtLeast(0)

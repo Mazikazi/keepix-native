@@ -61,6 +61,9 @@ private const val TAG = "MainActivity"
  */
 private const val MAX_DELETE_REQUEST_BATCH = 750
 
+/** Shown when a fullscreen action's target row has already left the list. */
+private const val ITEM_GONE_MESSAGE = "That item is no longer available."
+
 /** The media permission(s) this app needs to request, version-gated. */
 private fun requiredMediaPermissions(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -104,6 +107,23 @@ private val DeletionInFlightSaver: Saver<List<Long>?, LongArray> = Saver(
     restore = { if (it.isEmpty()) null else it.toList() }
 )
 
+/**
+ * Saves the fullscreen viewer's gallery snapshot across configuration change and
+ * process death. Each item encodes as a single string prefixed with '1'/'0' for
+ * isVideo, so no delimiter can collide with characters inside the URI itself.
+ */
+private val GalleryItemsSaver: Saver<List<GalleryItem>, ArrayList<String>> = Saver(
+    save = { items ->
+        ArrayList(items.map { "${if (it.isVideo) '1' else '0'}${it.uri}" })
+    },
+    restore = { encoded ->
+        encoded.mapNotNull { entry ->
+            if (entry.isEmpty()) null
+            else GalleryItem(Uri.parse(entry.substring(1)), entry[0] == '1')
+        }
+    }
+)
+
 class MainActivity : ComponentActivity() {
 
     private val viewModel: KeepixViewModel by viewModels()
@@ -127,9 +147,16 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     var selectedMediaBounds by remember { mutableStateOf<MediaTransitionBounds?>(null) }
-    // Gallery state for fullscreen viewer
-    var fullscreenGalleryItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
-    var fullscreenInitialIndex by remember { mutableIntStateOf(0) }
+    // Gallery state for the fullscreen viewer. rememberSaveable, not remember:
+    // the Activity declares no android:configChanges, so a rotation inside a
+    // multi-item gallery would otherwise bring these back empty -- isGalleryMode
+    // would flip false and the viewer would silently degrade to the originally
+    // tapped item at "1 / 1", losing the user's page (and, now that the action
+    // bar acts on the visible page, their RESTORE target).
+    var fullscreenGalleryItems by rememberSaveable(stateSaver = GalleryItemsSaver) {
+        mutableStateOf<List<GalleryItem>>(emptyList())
+    }
+    var fullscreenInitialIndex by rememberSaveable { mutableIntStateOf(0) }
 
     val activity = remember(context) { context.findActivity() }
 
@@ -551,36 +578,43 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // entry, not the one the route was built from.
                 onKeepOrRestore = { uri ->
                     val key = uri.toString()
-                    when (mode) {
+                    // galleryItems is a tap-time snapshot while binItems/
+                    // keptItems are live flows, so an expiry or cleanup pass
+                    // firing while the viewer is open can retire the row out
+                    // from under us. Report the miss rather than closing the
+                    // viewer and silently doing nothing.
+                    val hit = when (mode) {
                         ViewerMode.BIN ->
                             binItems.find { it.mediaUri == key }
-                                ?.let { viewModel.restoreItem(it) }
+                                ?.also { viewModel.restoreItem(it) }
                         ViewerMode.KEPT ->
                             keptItems.find { it.mediaUri == key }
-                                ?.let { viewModel.unkeepItem(it) }
+                                ?.also { viewModel.unkeepItem(it) }
                         ViewerMode.SWIPE ->
                             mediaItems.find { it.uri == uri }
-                                ?.let { viewModel.keepMedia(it) }
+                                ?.also { viewModel.keepMedia(it) }
                     }
+                    if (hit == null) viewModel.reportError(ITEM_GONE_MESSAGE)
                     navController.popBackStack()
                 },
                 onDeleteOrDeleteNow = { uri ->
                     val key = uri.toString()
-                    when (mode) {
+                    val hit = when (mode) {
                         // DELETE NOW only *marks* the row pending; the actual
                         // file deletion still goes through the Activity's
                         // system-confirmation flow below, so no Room row is
                         // dropped for an unconfirmed file deletion.
                         ViewerMode.BIN ->
                             binItems.find { it.mediaUri == key }
-                                ?.let { viewModel.deleteBinItems(listOf(it)) }
+                                ?.also { viewModel.deleteBinItems(listOf(it)) }
                         ViewerMode.KEPT ->
                             keptItems.find { it.mediaUri == key }
-                                ?.let { viewModel.deleteKeptItem(it) }
+                                ?.also { viewModel.deleteKeptItem(it) }
                         ViewerMode.SWIPE ->
                             mediaItems.find { it.uri == uri }
-                                ?.let { viewModel.markForDeletion(it) }
+                                ?.also { viewModel.markForDeletion(it) }
                     }
+                    if (hit == null) viewModel.reportError(ITEM_GONE_MESSAGE)
                     navController.popBackStack()
                 },
                 onDismiss = { navController.popBackStack() },
