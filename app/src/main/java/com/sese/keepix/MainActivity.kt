@@ -47,8 +47,18 @@ private const val TAG = "MainActivity"
  * unbounded batch risks `TransactionTooLargeException` on a very large bin.
  * Any remainder stays marked pending in the DB and is picked up on the next
  * pass once this batch resolves (see the deletion `LaunchedEffect` below).
+ *
+ * Derivation: the Binder transaction buffer is ~1 MB per process pair. A
+ * `content://media/external/images/media/<id>` URI parcels to roughly
+ * 100-150 bytes (scheme + authority + path + a Parcel-aligned string
+ * header). At 750 URIs that's ~75-115 KB -- still an order of magnitude
+ * under budget even after accounting for the surrounding Bundle/Parcel
+ * overhead of the `createDeleteRequest` call, which this simple per-URI
+ * estimate doesn't itemize. 750 sits inside the 500-1000 range that keeps
+ * that margin while cutting the dialog count for a large bin (e.g. 500-1000
+ * pending items) by 5-10x versus a 100-item cap.
  */
-private const val MAX_DELETE_REQUEST_BATCH = 100
+private const val MAX_DELETE_REQUEST_BATCH = 750
 
 /** The media permission(s) this app needs to request, version-gated. */
 private fun requiredMediaPermissions(): Array<String> =
@@ -136,10 +146,34 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         mutableStateOf<List<Long>?>(null)
     }
 
-    // Bumped on every ON_RESUME so the deletion effect below always gets a
-    // fresh chance to run when the app returns to the foreground: it retries a
-    // request that was skipped while backgrounded (see below) and gives the
-    // stuck-guard recovery below something to react to.
+    // The FULL set of ids the current run considered eligible (i.e. every id
+    // in `existingItems` before MAX_DELETE_REQUEST_BATCH chunking), paired
+    // with deletionInFlightIds (which only holds the ids in the chunk
+    // actually launched). Lets a cancel tell "more chunks of this same run
+    // are still queued" from "the user marked genuinely new rows while the
+    // dialog was open" -- only the latter should re-arm the prompt
+    // immediately (see the launcher callback below). Also rememberSaveable
+    // so it survives recreation alongside deletionInFlightIds.
+    var deletionRunIds by rememberSaveable(stateSaver = DeletionInFlightSaver) {
+        mutableStateOf<List<Long>?>(null)
+    }
+
+    // True once this composition has processed one ON_RESUME that wasn't the
+    // synchronous replay LifecycleRegistry.addObserver fires the instant this
+    // DisposableEffect's observer is added (it walks a newly-added observer
+    // up to the owner's *current* state, so if the Activity is already
+    // RESUMED -- which it always is by the time setContent's first
+    // composition runs -- ON_RESUME fires immediately, before
+    // rememberLauncherForActivityResult below has even registered to receive
+    // a pending result). Gates resumeTick's bump and the stuck-guard clear
+    // below so neither fires on that replay -- see the DisposableEffect for
+    // why both would misbehave otherwise.
+    var hasResumedOnce by remember { mutableStateOf(false) }
+
+    // Bumped on every genuine ON_RESUME so the deletion effect below always
+    // gets a fresh chance to run when the app returns to the foreground: it
+    // retries a request that was skipped while backgrounded (see below) and
+    // gives the stuck-guard recovery below something to react to.
     var resumeTick by remember { mutableIntStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -187,19 +221,38 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                     }
                 }
 
-                resumeTick++
+                // Skip the bump and the stuck-guard recovery below on the
+                // very first ON_RESUME of this composition: that one is
+                // LifecycleRegistry's synchronous replay (see hasResumedOnce's
+                // declaration), not a real foreground return. Letting it
+                // through would (a) null out deletionInFlightIds/
+                // deletionRunIds the instant rememberSaveable restores them on
+                // an Activity recreated while the system dialog is showing --
+                // discarding the eventual RESULT_OK/CANCELED before the
+                // launcher below even registers to receive it -- and (b) bump
+                // resumeTick on every cold start for no reason, cancelling and
+                // restarting the deletion effect's first (expensive,
+                // per-pending-URI) filterExistingUris pass.
+                if (hasResumedOnce) {
+                    resumeTick++
 
-                // If a delete request's system dialog launch was silently
-                // dropped (e.g. background-activity-start restrictions while
-                // this Activity was stopped), its result callback never runs
-                // and this guard would otherwise suppress every future delete
-                // prompt for the rest of the process. The normal path always
-                // clears it from the launcher callback, which fires before
-                // ON_RESUME whenever a dialog actually completed — so if it's
-                // still set here, that dialog never actually appeared.
-                if (deletionInFlightIds != null) {
-                    deletionInFlightIds = null
+                    // If a delete request's system dialog launch was silently
+                    // dropped (e.g. background-activity-start restrictions
+                    // while this Activity was stopped), its result callback
+                    // never runs and this guard would otherwise suppress
+                    // every future delete prompt for the rest of the process.
+                    // The normal path always clears it from the launcher
+                    // callback, which fires before a *genuine* ON_RESUME
+                    // whenever a dialog actually completed — so if it's still
+                    // set by the time we get here (past the first-ON_RESUME
+                    // replay, which is excluded above), that dialog never
+                    // actually appeared.
+                    if (deletionInFlightIds != null) {
+                        deletionInFlightIds = null
+                        deletionRunIds = null
+                    }
                 }
+                hasResumedOnce = true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -219,7 +272,9 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         val ids = deletionInFlightIds
+        val runIds = deletionRunIds
         deletionInFlightIds = null
+        deletionRunIds = null
         if (ids != null) {
             if (result.resultCode == Activity.RESULT_OK) {
                 viewModel.confirmDeletion(ids)
@@ -233,8 +288,19 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // alone that would also suppress this newer, never-shown
                 // batch until the user acts again. Detect it and re-open the
                 // prompt immediately.
-                val shownIds = ids.toSet()
-                val hasUnshownItems = pendingDeletionUris.any { it.id !in shownIds }
+                //
+                // Checked against runIds (the FULL id set this run started
+                // with, before MAX_DELETE_REQUEST_BATCH chunking) rather than
+                // just the shown chunk's ids: chunks 2..N of the SAME run are
+                // still "shown" in the sense that the user already asked to
+                // delete them, and treating them as unshown here would re-open
+                // the dialog immediately on every cancel of a multi-chunk
+                // batch (and loop forever if a persistently-failing
+                // unmarkPendingDeletion keeps re-selecting the same chunk).
+                // Only a row outside runIds was genuinely marked after this
+                // run began.
+                val runIdSet = (runIds ?: ids).toSet()
+                val hasUnshownItems = pendingDeletionUris.any { it.id !in runIdSet }
                 if (hasUnshownItems) {
                     viewModel.rearmPrompt()
                 }
@@ -285,12 +351,14 @@ fun KeepixApp(viewModel: KeepixViewModel) {
 
         val batch = existingItems.take(MAX_DELETE_REQUEST_BATCH)
         val batchIds = batch.map { it.first.id }
+        val runIds = existingItems.map { it.first.id }
         try {
             val intentSender = MediaDeletionHandler.getDeletionIntent(
                 context,
                 batch.map { it.second }
             ).intentSender
             deletionInFlightIds = batchIds
+            deletionRunIds = runIds
             deleteResultLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
         } catch (e: Exception) {
             // createDeleteRequest makes a synchronous call into MediaProvider
@@ -303,6 +371,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             // un-mark the batch and surface it as a normal, recoverable error.
             Log.e(TAG, "Failed to build/launch the system delete request", e)
             deletionInFlightIds = null
+            deletionRunIds = null
             viewModel.deferDeletion(batchIds)
             viewModel.reportError("Couldn't open the delete confirmation. Please try again.")
         }
@@ -330,25 +399,12 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         composable("permission") {
             PermissionScreen(
                 onRequestPermission = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.READ_MEDIA_IMAGES,
-                                Manifest.permission.READ_MEDIA_VIDEO
-                            )
-                        )
-                    } else {
-                        // WRITE_EXTERNAL_STORAGE is not in the manifest (scoped
-                        // storage + createDeleteRequest cover deletion instead) —
-                        // requesting it here would make Android report it denied
-                        // and `permissions.entries.all { it.value }` would never
-                        // be true on API 30-32, the floor of minSdk 30.
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.READ_EXTERNAL_STORAGE
-                            )
-                        )
-                    }
+                    // Single source of truth shared with checkMediaPermission
+                    // and the rationale checks above — hand-rolling this array
+                    // a second time is exactly the kind of drift that caused
+                    // the original P0 (a request array out of sync with what
+                    // the manifest declares).
+                    permissionLauncher.launch(requiredMediaPermissions())
                 },
                 isPermanentlyDenied = isPermanentlyDenied
             )
