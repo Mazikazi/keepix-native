@@ -98,10 +98,10 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
             }
 
             PolicySection(title = "4. Data Stored On Your Device") {
-                BodyText("Keepix uses a local Room (SQLite) database and DataStore preferences.")
+                BodyText("Keepix uses a local Room (SQLite) database and a SharedPreferences file.")
                 TableRow("bin_items", "Recycle Bin items pending permanent deletion")
                 TableRow("kept_items", "Items you chose to keep (prevents re-showing)")
-                TableRow("DataStore prefs", "retentionDays, onboardingComplete, fullscreenTutorialComplete")
+                TableRow("SharedPreferences", "retentionDays, batchSize, onboardingComplete, lastSessionId, fullscreenTutorialComplete")
                 Spacer(modifier = Modifier.height(4.dp))
                 BodyText("No media bytes are stored. Only URIs and metadata.")
             }

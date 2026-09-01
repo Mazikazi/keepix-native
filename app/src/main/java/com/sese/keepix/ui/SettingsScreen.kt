@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,7 +33,7 @@ fun SettingsScreen(
 ) {
     var sliderValue by remember { mutableFloatStateOf(currentRetentionDays.toFloat()) }
     var showEmptyConfirmation by remember { mutableStateOf(false) }
-    var showPrivacyPolicy by remember { mutableStateOf(false) }
+    var showPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
 
     if (showPrivacyPolicy) {
         PrivacyPolicyScreen(onBack = { showPrivacyPolicy = false })
