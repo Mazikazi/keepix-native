@@ -67,6 +67,16 @@ android {
     sourceSets.getByName("androidTest") {
         assets.srcDir("$projectDir/schemas")
     }
+    testOptions {
+        unitTests {
+            // JVM unit tests exercise production code (MediaRepository,
+            // KeepixViewModel) that references android.jar constants whose
+            // own static initializers call real platform methods (e.g.
+            // MediaStore.Images.Media.EXTERNAL_CONTENT_URI). Without this,
+            // any such reference throws instead of returning a stub value.
+            isReturnDefaultValues = true
+        }
+    }
     lint {
         // lifecycle 2.9.0's NonNullableMutableLiveDataDetector is built
         // against a newer lint API than AGP 8.7.3 bundles, so it crashes with
@@ -114,6 +124,7 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
