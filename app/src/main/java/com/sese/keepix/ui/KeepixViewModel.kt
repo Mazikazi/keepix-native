@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.*
 import com.sese.keepix.data.KeepixPreferences
 import com.sese.keepix.data.MediaItem
+import com.sese.keepix.data.MediaPageKey
 import com.sese.keepix.data.MediaRepository
 import com.sese.keepix.data.MediaAccessException
 import com.sese.keepix.db.AppDatabase
@@ -88,29 +89,54 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     val keptItemCount: StateFlow<Int> = keptItemDao.getKeptCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    // Windowed pagination over the device library (Defect 11). Rather than
-    // loading the whole library into memory, we track how far into the
-    // DATE_ADDED-descending cursor we've read and fetch pages on demand.
+    // Windowed pagination over the device library (Defect 11), using keyset
+    // (not offset) pagination -- see MediaPageKey's doc for why an integer
+    // offset is unsafe against a mutating, second-precision-sorted result set.
     private var binMediaIds: Set<Long> = emptySet()
     private var keptMediaIds: Set<Long> = emptySet()
 
-    // Number of rows READ from the underlying cursor so far -- not the number
-    // of items surviving the bin/kept filter. Excluded rows still occupy a
-    // cursor offset, so this must advance by rows read, or the next page would
-    // re-read (and re-filter) rows we've already seen.
-    private var mediaOffset = 0
+    // (dateAdded, id) of the last row read from the device library, or null
+    // before the first page. Passed back into MediaRepository.getMediaPage to
+    // resume strictly after it. This is the ONLY pagination cursor; there is
+    // no row-count offset anywhere in this class.
+    private var pageCursor: MediaPageKey? = null
 
-    // Total rows in the underlying cursor, snapshotted once per loadMedia().
-    private var totalMediaCount = 0
+    // True once a getMediaPage call has returned fewer rows than requested --
+    // MediaRepository's contract for "nothing older remains". This, not
+    // mediaCount, is what pagination termination relies on: it's read
+    // directly off the actual query result on every call, so it can't go
+    // stale the way a count snapshotted once at loadMedia() time can (e.g.
+    // after the user empties the bin and confirms deletion mid-session).
+    private var reachedEnd = false
+
+    // Cached once per loadMedia() purely for a "remaining" style display
+    // value if one is ever wanted; never consulted for pagination termination
+    // (see reachedEnd above).
+    private var mediaCount = 0
 
     // Every media id ever delivered into _mediaItems this session (whether
-    // still present or already swiped away). Guards against a duplicate: an
-    // id that was excluded at loadMedia() time (bin/kept from a previous
-    // session) but whose cursor row hasn't been reached yet by [mediaOffset]
-    // gets spliced back in immediately by [restoreItem]/[unkeepItem] -- without
-    // this guard, pagination would later reach that same row, find it no
-    // longer excluded, and add it a second time.
+    // still present or already swiped away). Grows for the life of the
+    // session and is never pruned (~48 bytes/entry for a HashSet<Long> node;
+    // fine at realistic per-session swipe volumes). Guards against a
+    // duplicate: an id that was excluded at loadMedia() time (bin/kept from a
+    // previous session) but whose row hasn't been reached yet by [pageCursor]
+    // gets spliced back in immediately by [restoreItem]/[unkeepItem] --
+    // without this guard, pagination would later reach that same row, find it
+    // no longer excluded, and add it a second time.
     private var seenMediaIds: MutableSet<Long> = mutableSetOf()
+
+    // Re-entrancy guard. Every swipe launches its own coroutine on
+    // viewModelScope (Main.immediate), and MediaRepository.getMediaPage
+    // suspends on Dispatchers.IO, so two top-ups -- or a top-up racing a
+    // fresh loadMedia() -- can trivially interleave: each would read
+    // [pageCursor], suspend, and resume to independently overwrite it,
+    // silently skipping whatever page sat between the two advances (seenIds
+    // only catches duplicates, not this). Main-confined, so a plain Boolean
+    // set before the first suspension point and cleared in a finally is
+    // sufficient -- no atomics needed. Must be held across both loadNextBatch
+    // and loadMedia's cursor reset, since a loadMedia() resetting pageCursor
+    // underneath an in-flight top-up would corrupt it the same way.
+    private var batchLoadInFlight = false
 
     init {
         performLaunchCleanup()
@@ -166,16 +192,26 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadMedia() {
         viewModelScope.launch {
+            if (batchLoadInFlight) {
+                // An in-flight top-up (or another loadMedia) already owns
+                // pageCursor/seenMediaIds; resetting them here would corrupt
+                // it (Critical 2). Safe to skip in practice -- loadMedia() is
+                // only ever called once at startup/permission-grant, well
+                // before any swipe could have a top-up in flight.
+                return@launch
+            }
+            batchLoadInFlight = true
             _isLoading.value = true
             _error.value = null
             try {
                 binMediaIds = binItemDao.getAllBinMediaIds().toSet()
                 keptMediaIds = keptItemDao.getAllKeptMediaIds().toSet()
-                totalMediaCount = repository.getMediaCount()
-                mediaOffset = 0
+                mediaCount = repository.getMediaCount()
+                pageCursor = null
+                reachedEnd = false
                 seenMediaIds = mutableSetOf()
                 _mediaItems.value = emptyList()
-                loadNextBatch()
+                fetchBatch()
             } catch (e: MediaAccessException) {
                 Log.e(TAG, "Failed to load media", e)
                 _error.value = e.message ?: "Failed to load media"
@@ -183,6 +219,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 Log.e(TAG, "Unexpected error loading media", e)
                 _error.value = "An unexpected error occurred"
             } finally {
+                batchLoadInFlight = false
                 _isLoading.value = false
             }
         }
@@ -194,39 +231,41 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Fetches pages from [repository] until either [prefs].batchSize new items
-     * have survived the bin/kept filter, or the underlying cursor is exhausted
-     * (`mediaOffset >= totalMediaCount`) -- i.e. the page is topped up rather
-     * than handed back short just because a page happened to be mostly
-     * excluded items.
+     * have survived the bin/kept filter, or [reachedEnd] becomes true -- i.e.
+     * the page is topped up rather than handed back short just because it
+     * happened to be mostly excluded items. Always requests a full
+     * `prefs.batchSize`-sized page per call (never a shrinking "remaining
+     * wanted" amount): shrinking the request once most of a batch is already
+     * filled degrades a heavily-excluded library (e.g. 9,000 of 10,000 photos
+     * already binned) into one row per blocking IPC.
      *
-     * Never throws: a [MediaAccessException] from the repository is caught and
-     * surfaced through [_error], same as [loadMedia].
+     * Assumes the caller already holds [batchLoadInFlight] -- this function
+     * does not touch that flag itself, since [loadMedia] needs to hold it
+     * across both the cursor reset and this call.
      */
-    private suspend fun loadNextBatch() {
+    private suspend fun fetchBatch() {
         val batchSize = prefs.batchSize
-        if (batchSize <= 0 || mediaOffset >= totalMediaCount) return
+        if (batchSize <= 0 || reachedEnd) return
 
         val excludedIds = binMediaIds + keptMediaIds
         val newItems = mutableListOf<MediaItem>()
 
         try {
-            while (newItems.size < batchSize && mediaOffset < totalMediaCount) {
-                val remainingWanted = batchSize - newItems.size
-                val page = repository.getMediaPage(mediaOffset, remainingWanted)
+            while (newItems.size < batchSize && !reachedEnd) {
+                val page = repository.getMediaPage(pageCursor, batchSize)
 
-                if (page.isEmpty()) {
-                    // We expected more rows (mediaOffset < totalMediaCount) but
-                    // got none back: file(s) at this offset were removed from
-                    // the device after getMediaCount() snapshotted the total.
-                    // Stop chasing a count that no longer exists rather than
-                    // looping forever, and tell the user why the queue came up
-                    // short.
-                    totalMediaCount = mediaOffset
-                    _error.value = "Photo no longer on device"
-                    break
+                if (page.size < batchSize) {
+                    // MediaRepository's termination contract: fewer rows than
+                    // requested means nothing older is left. Read directly off
+                    // this result, not off mediaCount (which a confirmed bin
+                    // deletion or external change can make stale mid-session).
+                    reachedEnd = true
                 }
+                if (page.isEmpty()) break
 
-                mediaOffset += page.size
+                val last = page.last()
+                pageCursor = MediaPageKey(last.dateAdded, last.id)
+
                 for (mediaItem in page) {
                     if (mediaItem.id !in excludedIds && seenMediaIds.add(mediaItem.id)) {
                         newItems.add(mediaItem)
@@ -243,11 +282,29 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Top-up entry point used by [removeSwipedItem]. Guarded the same way as
+     * [loadMedia] (see [batchLoadInFlight]) -- if a top-up or a fresh
+     * loadMedia() is already in flight, this is a deliberate no-op rather
+     * than a queued retry: the next swipe re-checks the same threshold in
+     * [removeSwipedItem] and will retry, so a dropped call here is at worst a
+     * one-swipe delay, never a permanent skip.
+     */
+    private suspend fun loadNextBatch() {
+        if (batchLoadInFlight) return
+        batchLoadInFlight = true
+        try {
+            fetchBatch()
+        } finally {
+            batchLoadInFlight = false
+        }
+    }
+
     private suspend fun removeSwipedItem(item: MediaItem) {
         _mediaItems.value = _mediaItems.value.filter { it.id != item.id }
 
         val batchSize = prefs.batchSize
-        if (_mediaItems.value.size < batchSize / 2 && mediaOffset < totalMediaCount) {
+        if (_mediaItems.value.size < batchSize / 2 && !reachedEnd) {
             loadNextBatch()
         }
     }
@@ -275,21 +332,44 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     /**
+     * True if [key] sorts at or after (i.e. pagination has already read past)
+     * the current [pageCursor], in DATE_ADDED DESC, _ID DESC order. `null`
+     * pageCursor means nothing has been read yet, so nothing is past it.
+     */
+    private fun isPastCursor(key: MediaPageKey): Boolean {
+        val cursor = pageCursor ?: return false
+        if (key.dateAdded != cursor.dateAdded) return key.dateAdded > cursor.dateAdded
+        return key.id > cursor.id
+    }
+
+    /**
      * Defect 10: restoring/unkeeping an item must not reset the swipe queue
      * back to the top. Instead of re-querying, splice [item] back into
-     * [_mediaItems] at its correct DATE_ADDED-descending position:
-     *  - If it sorts newer than (or equal to) the current front of the queue,
-     *    it lands at or near index 0 -- the very next card the user sees. This
-     *    is a real, visible change, but it's the correct one: the queue is
-     *    defined to always surface the newest not-yet-decided item first.
-     *  - If it sorts older, it lands further back in the still-untouched part
-     *    of the queue and changes nothing the user is about to see.
-     * Marks the id as seen so a not-yet-reached pagination page can never
-     * re-add it (see [seenMediaIds]).
+     * [_mediaItems] at its correct DATE_ADDED-descending position -- but only
+     * if pagination has already read past its row (Important 3):
+     *  - If [item] is at or past [pageCursor] (or [reachedEnd] -- the whole
+     *    library has been read), pagination will never visit that row again,
+     *    so it must be spliced in now, and marked seen so a stray future page
+     *    can't re-add it (see [seenMediaIds]). It lands at or near index 0 if
+     *    it sorts newer than everything currently queued -- a real, visible
+     *    change, but the correct one: the queue always surfaces the newest
+     *    not-yet-decided item first.
+     *  - If [item] is still ahead of the cursor (its row hasn't been read
+     *    yet), do nothing beyond un-excluding it (already done by the
+     *    caller): the item is, by definition, older than every row currently
+     *    in [_mediaItems], so `indexOfFirst` would find no older row and
+     *    append it -- placing it after rows pagination hasn't fetched yet and
+     *    breaking the DATE_ADDED-descending order this very function depends
+     *    on for later splices. Ordinary pagination will deliver it in its
+     *    correct place once the cursor actually reaches it.
      */
     private fun spliceIntoQueue(item: MediaItem) {
         val current = _mediaItems.value
         if (current.any { it.id == item.id }) return
+
+        if (!reachedEnd && !isPastCursor(MediaPageKey(item.dateAdded, item.id))) {
+            return
+        }
         seenMediaIds.add(item.id)
 
         val insertIndex = current.indexOfFirst { it.dateAdded < item.dateAdded }
@@ -321,6 +401,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                     durationMs = mediaItem.durationMs
                 )
             )
+            binMediaIds = binMediaIds + mediaItem.id
             _deletedCount.value++
             removeSwipedItem(mediaItem)
         }

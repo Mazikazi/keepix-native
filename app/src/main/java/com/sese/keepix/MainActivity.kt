@@ -334,6 +334,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         val missingIds = itemUris.filter { it.second in missingUris }.map { it.first.id }
         if (missingIds.isNotEmpty()) {
             viewModel.confirmDeletion(missingIds)
+            // TRD Keepix_TRD_v1.1.md:326 - "Media URI no longer valid (file
+            // moved externally) -> Catch error, silently remove from SQLite,
+            // show snackbar 'Photo no longer on device'". The removal half is
+            // confirmDeletion above; this attaches the required message.
+            viewModel.reportError("Photo no longer on device")
         }
 
         val existingUris = filterResult.existing.toSet()

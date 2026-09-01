@@ -4,9 +4,17 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sese.keepix.data.MediaItem
 import org.junit.Assert.*
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
+// Superseded by keyset pagination in KeepixViewModel/MediaRepository (Task 4).
+// This file touches zero production symbols -- it re-implements the *old*
+// offset drop/take arithmetic inline just to assert on itself, so it reads as
+// green pagination coverage while actually testing nothing about the real
+// (now keyset-based) implementation. Ignored rather than deleted/rewritten:
+// Task 9 owns real pagination tests.
+@Ignore("stale - superseded by windowed pagination, see Task 9")
 @RunWith(AndroidJUnit4::class)
 class PaginationTest {
 
