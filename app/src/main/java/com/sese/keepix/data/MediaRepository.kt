@@ -153,10 +153,12 @@ class MediaRepository(private val context: Context) {
                     ?: emptySet()
                 if (ContentResolver.QUERY_ARG_LIMIT !in honoredArgs) {
                     // Defensive only, should not happen at minSdk 30 against
-                    // the platform MediaProvider. The size cap on the loop
-                    // below plus the final .take(limit) keep pagination
-                    // correct even if some OEM provider ignores this; this is
-                    // just visibility into that (hopefully never hit) case.
+                    // the platform MediaProvider. The `mediaList.size < limit`
+                    // cap on the loop below is what actually keeps pagination
+                    // correct even if some OEM provider ignores this (the
+                    // final .take(limit) is a harmless no-op given that loop
+                    // cap, not load-bearing on its own); this log line is just
+                    // visibility into that (hopefully never hit) case.
                     Log.w(TAG, "Provider did not report honoring QUERY_ARG_LIMIT; clamping client-side")
                 }
 

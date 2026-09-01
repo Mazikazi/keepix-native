@@ -247,7 +247,6 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         val batchSize = prefs.batchSize
         if (batchSize <= 0 || reachedEnd) return
 
-        val excludedIds = binMediaIds + keptMediaIds
         val newItems = mutableListOf<MediaItem>()
 
         try {
@@ -266,6 +265,15 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 val last = page.last()
                 pageCursor = MediaPageKey(last.dateAdded, last.id)
 
+                // Read fresh every iteration rather than snapshotting once
+                // before the loop (fix wave 2, N2): getMediaPage above
+                // suspends on IO, so a restoreItem/unkeepItem/markForDeletion/
+                // keepMedia landing in that window mutates binMediaIds/
+                // keptMediaIds. A stale snapshot could filter a row using
+                // exclusion state that's already out of date, without ever
+                // recording it in seenMediaIds -- and once pageCursor advances
+                // past it above, it's gone for the session.
+                val excludedIds = binMediaIds + keptMediaIds
                 for (mediaItem in page) {
                     if (mediaItem.id !in excludedIds && seenMediaIds.add(mediaItem.id)) {
                         newItems.add(mediaItem)
@@ -339,7 +347,16 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private fun isPastCursor(key: MediaPageKey): Boolean {
         val cursor = pageCursor ?: return false
         if (key.dateAdded != cursor.dateAdded) return key.dateAdded > cursor.dateAdded
-        return key.id > cursor.id
+        // Inclusive of equality (fix wave 2, N1): key == cursor means this
+        // exact row IS pageCursor -- it was already read (and delivered or
+        // excluded) by the fetch that set pageCursor to it, and the next
+        // query's `_id < ?` bound means pagination will never return it
+        // again. A restore/unkeep for a row sitting exactly on a page
+        // boundary must be treated as "already past", or it is silently lost
+        // for the session: not in _mediaItems (excluded when read), not in
+        // seenMediaIds (the exclusion check short-circuits before that add),
+        // and never revisited by a future page.
+        return key.id >= cursor.id
     }
 
     /**
