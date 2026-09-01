@@ -201,7 +201,7 @@ Permission state is re-checked on every `ON_RESUME`, not just once at launch —
 **Actions in fullscreen (mode-dependent):**
 - **Swipe mode:** KEEP / DELETE — marks the decision, dismisses, advances the queue
 - **Bin mode:** RESTORE / DELETE NOW — restore removes the bin row (file untouched); Delete Now marks it `pendingDeletion` and follows the same system-dialog path as Empty Bin (§4) — it is not an immediate delete from this screen
-- **Kept mode:** DELETE — un-keeps the item and moves it into the bin (same as a left-swipe would have)
+- **Kept mode:** UNKEEP (primary) / DELETE (secondary) — these are not equivalent: UNKEEP removes the item from `kept_items` and splices it back into the live swipe queue (the user gets to decide on it again); DELETE removes it from `kept_items` and moves it into the bin instead (same as a left-swipe would have)
 
 **System UI:**
 - Status bar and navigation bar hidden (immersive mode) while fullscreen is open, restored on dismiss
@@ -256,10 +256,10 @@ Permission state is re-checked on every `ON_RESUME`, not just once at launch —
 
 **Trigger:** User taps the heart/Kept icon from Main Swipe Screen
 
-**UI Layout:** a 2-column grid of every item the user has swiped right on, each thumbnail tappable to open in Fullscreen Viewer (Kept mode).
+**UI Layout:** a 3-column grid (`LazyVerticalGrid(columns = GridCells.Fixed(3))`, same layout as the Bin) of every item the user has swiped right on, each thumbnail tappable to open in Fullscreen Viewer (Kept mode).
 
 **Actions:**
-- Tap item → **Screen 5: Fullscreen Viewer** in Kept mode (DELETE moves it to the bin)
+- Tap item → **Screen 5: Fullscreen Viewer** in Kept mode — UNKEEP returns it to the swipe queue, DELETE moves it to the bin (see §2 Screen 5 for the distinction)
 - A confirmation step guards accidental un-keep/delete from this grid
 
 **Empty state:** shown when no items have been kept yet.

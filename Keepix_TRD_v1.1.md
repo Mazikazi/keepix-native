@@ -107,7 +107,7 @@ context.contentResolver.query(collection, projection, queryArgs, null)
 - Entry: cross-fade/scale transition from the originating card's on-screen bounds (`MediaTransitionBounds`), not a Navigation-Compose shared-element API.
 - Exit: swipe-down-to-dismiss (velocity-based) or the back button/system gesture.
 
-**Action bar at bottom:** a glassmorphism pill with mode-dependent actions — KEEP/DELETE from the swipe queue, RESTORE/DELETE from the Bin, or DELETE (unkeep + bin) from Kept Items.
+**Action bar at bottom:** a glassmorphism pill with mode-dependent actions — KEEP/DELETE from the swipe queue, RESTORE/DELETE NOW from the Bin, or UNKEEP/DELETE from Kept Items. The two Kept-mode actions are not equivalent: UNKEEP (`KeepixViewModel.unkeepItem`) removes the row from `kept_items` and splices it back into the live swipe queue; DELETE (`KeepixViewModel.deleteKeptItem`) removes it from `kept_items` and inserts it into `bin_items` instead — same destination a left-swipe would have sent it to.
 
 **Immersive mode:** status and navigation bars are hidden while the viewer is open and restored on exit.
 
