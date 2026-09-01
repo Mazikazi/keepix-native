@@ -30,6 +30,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sese.keepix.ui.*
@@ -392,6 +393,13 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val sessionKeptCount by viewModel.sessionKeptCount.collectAsState()
     val error by viewModel.error.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val reachedEnd by viewModel.reachedEnd.collectAsState()
+
+    // Task 5: whether a fullscreen viewer is currently the top destination --
+    // used only to pause SwipeScreen's autoplaying top-card video while it's
+    // covered by the fullscreen one.
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val isFullscreenOpen = currentBackStackEntry?.destination?.route?.startsWith("fullscreen") == true
 
     // Determine start destination
     val startDestination = when {
@@ -463,7 +471,10 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 deletedCount = deletedCount,
                 error = error,
                 onErrorDismiss = { viewModel.clearError() },
-                isLoading = isLoading
+                isLoading = isLoading,
+                reachedEnd = reachedEnd,
+                onRetry = { viewModel.loadMedia() },
+                isFullscreenOpen = isFullscreenOpen
             )
         }
 

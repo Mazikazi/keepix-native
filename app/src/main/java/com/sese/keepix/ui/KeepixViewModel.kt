@@ -107,7 +107,13 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     // directly off the actual query result on every call, so it can't go
     // stale the way a count snapshotted once at loadMedia() time can (e.g.
     // after the user empties the bin and confirms deletion mid-session).
-    private var reachedEnd = false
+    //
+    // Exposed as a StateFlow (not a plain var) so SwipeScreen's empty state
+    // can tell "genuinely finished" (reachedEnd true) apart from "queue
+    // drained because a batch fetch failed" (reachedEnd false, see N3) --
+    // the latter needs a retry affordance, the former doesn't.
+    private val _reachedEnd = MutableStateFlow(false)
+    val reachedEnd: StateFlow<Boolean> = _reachedEnd.asStateFlow()
 
     // Cached once per loadMedia() purely for a "remaining" style display
     // value if one is ever wanted; never consulted for pagination termination
@@ -208,7 +214,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 keptMediaIds = keptItemDao.getAllKeptMediaIds().toSet()
                 mediaCount = repository.getMediaCount()
                 pageCursor = null
-                reachedEnd = false
+                _reachedEnd.value = false
                 seenMediaIds = mutableSetOf()
                 _mediaItems.value = emptyList()
                 fetchBatch()
@@ -245,12 +251,12 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     private suspend fun fetchBatch() {
         val batchSize = prefs.batchSize
-        if (batchSize <= 0 || reachedEnd) return
+        if (batchSize <= 0 || _reachedEnd.value) return
 
         val newItems = mutableListOf<MediaItem>()
 
         try {
-            while (newItems.size < batchSize && !reachedEnd) {
+            while (newItems.size < batchSize && !_reachedEnd.value) {
                 val page = repository.getMediaPage(pageCursor, batchSize)
 
                 if (page.size < batchSize) {
@@ -258,7 +264,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                     // requested means nothing older is left. Read directly off
                     // this result, not off mediaCount (which a confirmed bin
                     // deletion or external change can make stale mid-session).
-                    reachedEnd = true
+                    _reachedEnd.value = true
                 }
                 if (page.isEmpty()) break
 
@@ -301,10 +307,20 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun loadNextBatch() {
         if (batchLoadInFlight) return
         batchLoadInFlight = true
+        // Carried M5: a top-up needs _isLoading too, or a slow fetch on a
+        // nearly-drained queue shows nothing while it's in flight. This is
+        // safe to flip unconditionally -- SwipeScreen checks
+        // mediaItems.isNotEmpty() before it ever looks at isLoading, so
+        // toggling this while cards are still on screen (the normal top-up
+        // case) has no visible effect. It only matters -- correctly -- when
+        // the queue has just been drained to zero and this top-up is what's
+        // deciding whether the user sees a spinner or a premature "All Done!".
+        _isLoading.value = true
         try {
             fetchBatch()
         } finally {
             batchLoadInFlight = false
+            _isLoading.value = false
         }
     }
 
@@ -312,7 +328,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         _mediaItems.value = _mediaItems.value.filter { it.id != item.id }
 
         val batchSize = prefs.batchSize
-        if (_mediaItems.value.size < batchSize / 2 && !reachedEnd) {
+        if (_mediaItems.value.size < batchSize / 2 && !_reachedEnd.value) {
             loadNextBatch()
         }
     }
@@ -384,7 +400,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         val current = _mediaItems.value
         if (current.any { it.id == item.id }) return
 
-        if (!reachedEnd && !isPastCursor(MediaPageKey(item.dateAdded, item.id))) {
+        if (!_reachedEnd.value && !isPastCursor(MediaPageKey(item.dateAdded, item.id))) {
             return
         }
         seenMediaIds.add(item.id)

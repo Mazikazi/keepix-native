@@ -13,6 +13,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,9 +69,25 @@ fun SwipeScreen(
     deletedCount: Int,
     error: String? = null,
     onErrorDismiss: () -> Unit = {},
-    // Plumbed through for Task 5's empty-state-vs-loading treatment; not
-    // otherwise consumed here.
-    isLoading: Boolean = false
+    // Distinguishes the initial-load spinner from the (post-load) empty
+    // states below. A single flag is enough: the main content branch below
+    // checks mediaItems.isNotEmpty() first, so a top-up flipping this while
+    // cards are still on screen never reaches the loading/empty branches at
+    // all -- it only matters when mediaItems is actually empty.
+    isLoading: Boolean = false,
+    // True once pagination has genuinely exhausted the device library.
+    // False while nothing has loaded yet, and also false if a batch fetch
+    // failed with cards still to come (Carried N3) -- both cases need to be
+    // told apart from "really finished" in the empty state below, since only
+    // one of them warrants a retry affordance. Defaults to true so a caller
+    // that hasn't wired it up yet degrades to the old empty-state look
+    // rather than showing a bogus error.
+    reachedEnd: Boolean = true,
+    onRetry: () -> Unit = {},
+    // True while a fullscreen viewer is open above this screen. Used only to
+    // pause the top card's autoplaying video -- otherwise it keeps playing
+    // (silently) underneath the fullscreen one.
+    isFullscreenOpen: Boolean = false
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val swipeThreshold = with(LocalDensity.current) { (screenWidth * 0.4f).toPx() }
@@ -147,6 +165,29 @@ fun SwipeScreen(
         // Main content
         if (mediaItems.isNotEmpty()) {
             val currentItem = mediaItems[0]
+
+            // Guards both input paths (gesture and the bottom buttons) against
+            // firing twice for the same card -- e.g. a rapid double-tap on
+            // KEEP, or a button tap immediately followed by a drag on the
+            // still-visible card underneath. Resets automatically once a new
+            // card reaches the top (removeSwipedItem/spliceIntoQueue land
+            // asynchronously, so the old card can remain top-of-stack for a
+            // moment after its swipe was already accepted).
+            var swipeInProgress by remember(currentItem.id) { mutableStateOf(false) }
+
+            fun performSwipe(direction: Float, startOffset: Float) {
+                if (swipeInProgress) return
+                swipeInProgress = true
+                outgoingCard = OutgoingCard(currentItem, direction, startOffset)
+                stackProgress = 0f
+                sideLightProgress = 0f
+                if (direction < 0f) {
+                    onSwipedLeft(currentItem)
+                } else {
+                    onSwipedRight(currentItem)
+                }
+            }
+
             SideSwipeLights(progress = sideLightProgress)
 
             // Card stack - show up to 3 cards
@@ -197,16 +238,9 @@ fun SwipeScreen(
                         mediaItem = currentItem,
                         swipeThreshold = swipeThreshold,
                         onBoundsChanged = onCardBoundsChanged,
-                        onSwiped = { direction, startOffset ->
-                            outgoingCard = OutgoingCard(currentItem, direction, startOffset)
-                            stackProgress = 0f
-                            sideLightProgress = 0f
-                            if (direction < 0f) {
-                            onSwipedLeft(currentItem)
-                            } else {
-                                onSwipedRight(currentItem)
-                            }
-                        },
+                        autoplayVideo = currentItem.isVideo && !isFullscreenOpen,
+                        interactive = !swipeInProgress,
+                        onSwiped = { direction, startOffset -> performSwipe(direction, startOffset) },
                         onTap = { onTapCard(currentItem) },
                         onSwipeProgress = { progress ->
                             stackProgress = abs(progress)
@@ -225,13 +259,62 @@ fun SwipeScreen(
                 }
             }
 
-            // Metadata bar at bottom
-            Box(
+            // Bottom action buttons + metadata bar, stacked above one another
+            // and pinned to the bottom of the screen.
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Bottom DELETE/KEEP buttons (AppFlow Screen 4). The PRD is
+                // explicit these exist for users who aren't comfortable with
+                // swipe gestures, so they must be a genuine equivalent, not a
+                // degraded fallback: both route through the same
+                // performSwipe() the gesture path uses, which animates the
+                // card off-screen via OutgoingSwipeCard and fires the same
+                // onSwipedLeft/onSwipedRight callback. swipeInProgress (reset
+                // per-card above) guards rapid repeated taps the same way it
+                // guards a tap racing a drag on the same card.
+                GlassCard(cornerRadius = 40.dp) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(32.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { performSwipe(-1f, 0f) },
+                            enabled = !swipeInProgress,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(DeleteRedOverlay, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Delete this item",
+                                tint = Color.White
+                            )
+                        }
+                        IconButton(
+                            onClick = { performSwipe(1f, 0f) },
+                            enabled = !swipeInProgress,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(KeepGreenOverlay, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Keep this item",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Metadata bar
                 GlassCard(cornerRadius = 16.dp) {
                     Row(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
@@ -260,8 +343,26 @@ fun SwipeScreen(
                     }
                 }
             }
-        } else {
-            // Empty state - all done
+        } else if (isLoading) {
+            // Initial load in flight -- nothing to show yet (Defect 8). Kept
+            // separate from the mediaItems-empty branch below so the two
+            // never get confused: this one is purely "no data yet", the one
+            // below is "loaded, and the queue really is empty".
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(color = AccentPurple)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Loading your library…",
+                    color = TextSecondary
+                )
+            }
+        } else if (reachedEnd) {
+            // Genuinely finished: pagination exhausted the library and the
+            // queue is empty.
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -292,16 +393,71 @@ fun SwipeScreen(
                         tintAlpha = 0.2f
                     ) {
                         Text("View Bin ($binCount items)")
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // Carried N3: reachedEnd latches for the life of the process,
+                // so it can go stale if new photos land on the device after
+                // the library was exhausted. This is the user's way back in
+                // without restarting the app -- it re-runs the same load path
+                // as a cold start and will pick up anything new.
+                TextButton(onClick = onRetry) {
+                    Text("Check for new photos", color = TextSecondary)
+                }
+            }
+        } else {
+            // Carried N3: the queue is empty but pagination never reached the
+            // end -- a batch fetch failed (e.g. mid-top-up) rather than the
+            // library genuinely running out. Telling this apart from the
+            // reachedEnd branch above matters: without it the user sees "All
+            // Done!" for a library that isn't finished, with no way to
+            // continue.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("⚠️", fontSize = 64.sp)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Couldn't load your library",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Something went wrong while loading photos.",
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(32.dp))
+                com.sese.keepix.ui.components.GlassButton(
+                    onClick = onRetry,
+                    cornerRadius = 16.dp,
+                    tintColor = AccentPurple,
+                    tintAlpha = 0.2f
+                ) {
+                    Text("Retry")
                 }
             }
         }
 
+        // Defect 7: this must live on the root Box, as a sibling of the
+        // mediaItems/isLoading/empty-state branches above, not nested inside
+        // any one of them. It used to sit inside the empty-state `else`,
+        // which meant it was only ever composed when the queue was empty --
+        // showSnackbar(error) in the LaunchedEffect above would suspend
+        // forever while cards were on screen, so a media-load error during
+        // normal swiping was silently swallowed.
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
-}
 }
 
 @Composable
@@ -411,7 +567,13 @@ fun SwipeableCard(
     onBoundsChanged: (MediaTransitionBounds) -> Unit,
     onSwiped: (direction: Float, startOffset: Float) -> Unit,
     onTap: () -> Unit,
-    onSwipeProgress: (Float) -> Unit
+    onSwipeProgress: (Float) -> Unit,
+    autoplayVideo: Boolean = mediaItem.isVideo,
+    // False once the caller has already accepted a swipe for this card (e.g.
+    // via the bottom buttons) -- closes the multi-touch race where a second
+    // finger completes a drag on the same card after a button tap already
+    // fired performSwipe, which would otherwise fire onSwiped a second time.
+    interactive: Boolean = true
 ) {
     var offsetX by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
@@ -428,8 +590,13 @@ fun SwipeableCard(
 
     val displayOffsetX = if (isDragging) offsetX else animatedOffsetX
     val rotation = displayOffsetX / 20f
+    // Same -1f..1f drag progress reported to the parent via onSwipeProgress
+    // (for the side lights / stack scale), computed locally too so the
+    // KEEP/DELETE badges below can react to it directly without a round trip
+    // through the caller.
+    val progress = (displayOffsetX / swipeThreshold).coerceIn(-1f, 1f)
     LaunchedEffect(displayOffsetX, swipeThreshold) {
-        onSwipeProgress((displayOffsetX / swipeThreshold).coerceIn(-1f, 1f))
+        onSwipeProgress(progress)
     }
 
     Card(
@@ -457,19 +624,19 @@ fun SwipeableCard(
                 rotationZ = rotation,
                 alpha = 1f - (abs(if (isDragging) offsetX else animatedOffsetX) / 2000f).coerceIn(0f, 0.3f)
             )
-            .pointerInput(mediaItem.id, swipeHandled) {
+            .pointerInput(mediaItem.id, swipeHandled, interactive) {
                 detectTapGestures(
                     onTap = {
-                        if (!swipeHandled) {
+                        if (!swipeHandled && interactive) {
                             onTap()
                         }
                     }
                 )
             }
-            .pointerInput(mediaItem) {
+            .pointerInput(mediaItem, interactive) {
                 detectDragGestures(
                     onDragStart = {
-                        if (!swipeHandled) {
+                        if (!swipeHandled && interactive) {
                             isDragging = true
                         }
                     },
@@ -477,7 +644,7 @@ fun SwipeableCard(
                         isDragging = false
                         val swipedRight = offsetX > swipeThreshold
                         val swipedLeft = offsetX < -swipeThreshold
-                        if ((swipedRight || swipedLeft) && !swipeHandled) {
+                        if ((swipedRight || swipedLeft) && !swipeHandled && interactive) {
                             swipeHandled = true
                             onSwipeProgress(0f)
                             onSwiped(if (swipedRight) 1f else -1f, offsetX)
@@ -490,7 +657,7 @@ fun SwipeableCard(
                         offsetX = 0f
                     }
                 ) { change, dragAmount ->
-                    if (!swipeHandled) {
+                    if (!swipeHandled && interactive) {
                         change.consume()
                         offsetX += dragAmount.x
                     }
@@ -502,7 +669,7 @@ fun SwipeableCard(
         Box(modifier = Modifier.fillMaxSize()) {
             MediaCardContent(
                 mediaItem = mediaItem,
-                autoplayVideo = mediaItem.isVideo,
+                autoplayVideo = autoplayVideo,
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(24.dp))
@@ -529,6 +696,48 @@ fun SwipeableCard(
                         color = Color.White,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            // KEEP/DELETE badge overlays (PRD 5.1). Opacity tracks drag
+            // distance via the same `progress` used for the side lights;
+            // only one is ever visible since progress can't be both positive
+            // and negative at once.
+            if (progress > 0f) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(24.dp)
+                        .graphicsLayer(rotationZ = -12f, alpha = progress),
+                    color = KeepGreenOverlay,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "KEEP",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+            } else if (progress < 0f) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        // Extra top padding so this doesn't collide with the
+                        // video-duration badge, which occupies the same corner.
+                        .padding(top = if (mediaItem.isVideo) 64.dp else 24.dp, end = 24.dp)
+                        .graphicsLayer(rotationZ = 12f, alpha = -progress),
+                    color = DeleteRedOverlay,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "DELETE",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             }
