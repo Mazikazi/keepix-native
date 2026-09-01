@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -107,17 +108,18 @@ private const val DOUBLE_TAP_SCALE = 2.5f
 /** Controls fade after this long without interaction (AppFlow §Screen 5). */
 private const val CONTROLS_FADE_DELAY_MS = 3_000L
 
+/** How long the in-viewer notice stays up. */
+private const val ACTION_NOTICE_DURATION_MS = 2_500L
+
+/** Shown in-viewer when an action's target row has already left the list. */
+private const val ITEM_GONE_NOTICE = "That item is no longer available."
+
 /** How long a single tap waits to see whether it is really a double tap. */
 private const val DOUBLE_TAP_WINDOW_MS = 250L
 
 /** Video position poll interval while playing (TRD §3.3). */
 private const val VIDEO_POLL_INTERVAL_MS = 200L
 
-/**
- * How long a horizontal drag on a zoomable page is withheld from the pager, to
- * cover the skew between the two fingers of a pinch landing.
- */
-private const val PAGER_HANDOFF_GRACE_MS = 40L
 
 /**
  * Vertical room reserved at the bottom of a media page for the viewer's own
@@ -137,8 +139,16 @@ fun FullscreenViewer(
     isVideo: Boolean,
     mode: ViewerMode = ViewerMode.SWIPE,
     transitionBounds: MediaTransitionBounds? = null,
-    onKeepOrRestore: (Uri) -> Unit,
-    onDeleteOrDeleteNow: (Uri) -> Unit,
+    /**
+     * Performs the primary action on the given item. Returns false when the
+     * item is no longer in the underlying list -- an expiry or cleanup pass can
+     * retire a row while the viewer is open. The viewer then STAYS OPEN and
+     * shows the miss itself: RecycleBinScreen and KeptItemsScreen do not render
+     * `viewModel.error`, so routing it through there would strand the message
+     * until the user happened to reach the swipe screen.
+     */
+    onKeepOrRestore: (Uri) -> Boolean,
+    onDeleteOrDeleteNow: (Uri) -> Boolean,
     onDismiss: () -> Unit,
     tutorialComplete: Boolean = true,
     onTutorialDismiss: () -> Unit = {},
@@ -154,6 +164,17 @@ fun FullscreenViewer(
 
     // Bumped by any control interaction so the auto-fade timer restarts.
     var interactionTick by remember { mutableIntStateOf(0) }
+
+    // Transient in-viewer notice, currently only "that item is gone". Shown
+    // here rather than via viewModel.error because the bin and kept screens
+    // never render that flow (see onKeepOrRestore's doc).
+    var actionNotice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(actionNotice) {
+        if (actionNotice != null) {
+            delay(ACTION_NOTICE_DURATION_MS)
+            actionNotice = null
+        }
+    }
 
     // The page the pager has actually settled on / is closest to. Sourced from
     // `pagerState.currentPage` (not the static `initialIndex` prop) so the page
@@ -339,8 +360,12 @@ fun FullscreenViewer(
                     controlsVisible = showControls && !closing,
                     onShowControlsToggle = { showControls = !showControls },
                     onZoomChanged = { pageZoomed = it },
-                    onKeepOrRestore = { onKeepOrRestore(mediaUri) },
-                    onDeleteOrDeleteNow = { onDeleteOrDeleteNow(mediaUri) },
+                    onKeepOrRestore = {
+                        if (!onKeepOrRestore(mediaUri)) actionNotice = ITEM_GONE_NOTICE
+                    },
+                    onDeleteOrDeleteNow = {
+                        if (!onDeleteOrDeleteNow(mediaUri)) actionNotice = ITEM_GONE_NOTICE
+                    },
                     onDismiss = { startDismiss() },
                     onSetClosing = { closing = true; showControls = false },
                     onInteraction = { interactionTick++ }
@@ -365,6 +390,19 @@ fun FullscreenViewer(
                     .graphicsLayer(alpha = controlsAlpha),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                actionNotice?.let { notice ->
+                    GlassCard(cornerRadius = 20.dp) {
+                        Text(
+                            text = notice,
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 if (isGalleryMode) {
                     GlassCard(cornerRadius = 20.dp) {
                         Text(
@@ -382,11 +420,15 @@ fun FullscreenViewer(
                     mode = mode,
                     onPrimary = {
                         interactionTick++
-                        onKeepOrRestore(currentItem.uri)
+                        if (!onKeepOrRestore(currentItem.uri)) {
+                            actionNotice = ITEM_GONE_NOTICE
+                        }
                     },
                     onSecondary = {
                         interactionTick++
-                        onDeleteOrDeleteNow(currentItem.uri)
+                        if (!onDeleteOrDeleteNow(currentItem.uri)) {
+                            actionNotice = ITEM_GONE_NOTICE
+                        }
                     }
                 )
             }
@@ -1029,8 +1071,25 @@ private fun ViewerMediaContent(
                             // swipeThreshold and fire an unintended KEEP/DELETE.
                             val change = pressed.firstOrNull { it.id == down.id } ?: break
 
-                            totalX = change.position.x - down.position.x
-                            totalY = change.position.y - down.position.y
+                            // Accumulated, NOT `change.position - down.position`.
+                            // This gesture node sits inside the very transform
+                            // it drives (SingleItemViewer's fly-off
+                            // graphicsLayer, the gallery dismiss's
+                            // Modifier.offset), so `down.position` was captured
+                            // at translation 0 while `change.position` arrives
+                            // in the node's *current* local space. Differencing
+                            // the two feeds the translation back into itself and
+                            // converges on half the finger's real travel -- the
+                            // photo tracks at ~50% and the swipe threshold needs
+                            // ~60% more travel than it should. positionChange()
+                            // is a delta between two points converted through
+                            // the same matrix, so it is transform-immune; this
+                            // is what SwipeScreen already does. IgnoreConsumed
+                            // so the total stays the finger's true travel even
+                            // once the pager starts consuming.
+                            val delta = change.positionChangeIgnoreConsumed()
+                            totalX += delta.x
+                            totalY += delta.y
 
                             if (!decided &&
                                 (abs(totalX) > touchSlop || abs(totalY) > touchSlop)
@@ -1067,26 +1126,26 @@ private fun ViewerMediaContent(
                                         latestOnDrag(totalX, 0f)
                                         change.consume()
                                     }
-                                    // (4) Horizontal drag the pager wants --
-                                    // but withhold it briefly on a zoomable
-                                    // page. If one finger crosses slop just
-                                    // before the second lands, releasing it
-                                    // immediately lets HorizontalPager claim
-                                    // and settle the drag; the pinch then
-                                    // starts on a page that is already moving,
-                                    // and the settle can land on the next page,
-                                    // whose activation resets the zoom the user
-                                    // was starting. Holding it for the width of
-                                    // a two-finger touch-down closes that
-                                    // window; paging is delayed by a frame or
-                                    // two at most, and not at all for video.
-                                    draggingHorizontal && zoomable &&
-                                        change.uptimeMillis - down.uptimeMillis <
-                                        PAGER_HANDOFF_GRACE_MS -> {
-                                        change.consume()
-                                    }
-                                    // (4) Otherwise leave it unconsumed so
-                                    // HorizontalPager takes it.
+                                    // (4) Horizontal drag in the pager: leave
+                                    // it unconsumed so HorizontalPager takes
+                                    // it.
+                                    //
+                                    // Do NOT be tempted to consume this
+                                    // briefly to protect a pinch whose second
+                                    // finger lands late (fix wave 1 tried it
+                                    // and it was reverted). Consuming does not
+                                    // *delay* the hand-off, it cancels the
+                                    // pager's drag for the whole gesture:
+                                    // awaitPointerSlopOrCancellation bails the
+                                    // moment it sees a consumed change, and
+                                    // the re-entered awaitFirstDown needs a
+                                    // changedToDown() that an already-down
+                                    // finger never produces. Paging then stays
+                                    // dead until the user lifts and swipes
+                                    // again. The only safe shape would be to
+                                    // withhold *classification* without
+                                    // consuming; the artefact it protects
+                                    // against is cosmetic and not worth it.
                                 }
                             }
                         }

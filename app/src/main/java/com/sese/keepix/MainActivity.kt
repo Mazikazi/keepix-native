@@ -61,8 +61,6 @@ private const val TAG = "MainActivity"
  */
 private const val MAX_DELETE_REQUEST_BATCH = 750
 
-/** Shown when a fullscreen action's target row has already left the list. */
-private const val ITEM_GONE_MESSAGE = "That item is no longer available."
 
 /** The media permission(s) this app needs to request, version-gated. */
 private fun requiredMediaPermissions(): Array<String> =
@@ -107,23 +105,6 @@ private val DeletionInFlightSaver: Saver<List<Long>?, LongArray> = Saver(
     restore = { if (it.isEmpty()) null else it.toList() }
 )
 
-/**
- * Saves the fullscreen viewer's gallery snapshot across configuration change and
- * process death. Each item encodes as a single string prefixed with '1'/'0' for
- * isVideo, so no delimiter can collide with characters inside the URI itself.
- */
-private val GalleryItemsSaver: Saver<List<GalleryItem>, ArrayList<String>> = Saver(
-    save = { items ->
-        ArrayList(items.map { "${if (it.isVideo) '1' else '0'}${it.uri}" })
-    },
-    restore = { encoded ->
-        encoded.mapNotNull { entry ->
-            if (entry.isEmpty()) null
-            else GalleryItem(Uri.parse(entry.substring(1)), entry[0] == '1')
-        }
-    }
-)
-
 class MainActivity : ComponentActivity() {
 
     private val viewModel: KeepixViewModel by viewModels()
@@ -147,16 +128,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     var selectedMediaBounds by remember { mutableStateOf<MediaTransitionBounds?>(null) }
-    // Gallery state for the fullscreen viewer. rememberSaveable, not remember:
-    // the Activity declares no android:configChanges, so a rotation inside a
-    // multi-item gallery would otherwise bring these back empty -- isGalleryMode
-    // would flip false and the viewer would silently degrade to the originally
-    // tapped item at "1 / 1", losing the user's page (and, now that the action
-    // bar acts on the visible page, their RESTORE target).
-    var fullscreenGalleryItems by rememberSaveable(stateSaver = GalleryItemsSaver) {
-        mutableStateOf<List<GalleryItem>>(emptyList())
-    }
-    var fullscreenInitialIndex by rememberSaveable { mutableIntStateOf(0) }
 
     val activity = remember(context) { context.findActivity() }
 
@@ -486,8 +457,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onNavigateToSettings = { navController.navigate("settings") },
                 onCardBoundsChanged = { bounds -> selectedMediaBounds = bounds },
                 onTapCard = { item ->
-                    fullscreenGalleryItems = mediaItems.map { GalleryItem(it.uri, it.isVideo) }
-                    fullscreenInitialIndex = mediaItems.indexOf(item).coerceAtLeast(0)
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.uri.toString())}/${item.isVideo}/${ViewerMode.SWIPE.routeKey}"
                     )
@@ -512,8 +481,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onRestore = { item -> viewModel.restoreItem(item) },
                 onDeleteConfirmed = { viewModel.deleteBinItems(binItems) },
                 onItemTap = { item ->
-                    fullscreenGalleryItems = binItems.map { GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO") }
-                    fullscreenInitialIndex = binItems.indexOf(item).coerceAtLeast(0)
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.BIN.routeKey}"
                     )
@@ -527,8 +494,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 items = keptItems,
                 onUnkeep = { item -> viewModel.unkeepItem(item) },
                 onItemTap = { item ->
-                    fullscreenGalleryItems = keptItems.map { GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO") }
-                    fullscreenInitialIndex = keptItems.indexOf(item).coerceAtLeast(0)
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.KEPT.routeKey}"
                     )
@@ -564,6 +529,28 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             val isVideo = backStackEntry.arguments?.getBoolean("isVideo") ?: false
             val mode = ViewerMode.fromRouteKey(backStackEntry.arguments?.getString("mode"))
 
+            // Derived from the LIVE list for this mode, never from a snapshot
+            // taken at tap time. A snapshot survives process death while
+            // performLaunchCleanup() runs on every launch and can retire rows
+            // underneath it, so a restored viewer could page through items that
+            // no longer exist and count them in the indicator. Deriving here
+            // also means an expiry firing while the viewer is open simply
+            // shortens the gallery instead of stranding dead pages.
+            val galleryItems = remember(mode, mediaItems, binItems, keptItems) {
+                when (mode) {
+                    ViewerMode.SWIPE -> mediaItems.map { GalleryItem(it.uri, it.isVideo) }
+                    ViewerMode.BIN -> binItems.map {
+                        GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO")
+                    }
+                    ViewerMode.KEPT -> keptItems.map {
+                        GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO")
+                    }
+                }
+            }
+            val initialIndex = remember(galleryItems, mediaUri) {
+                galleryItems.indexOfFirst { it.uri == mediaUri }.coerceAtLeast(0)
+            }
+
             FullscreenViewer(
                 mediaUri = mediaUri,
                 isVideo = isVideo,
@@ -594,8 +581,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                             mediaItems.find { it.uri == uri }
                                 ?.also { viewModel.keepMedia(it) }
                     }
-                    if (hit == null) viewModel.reportError(ITEM_GONE_MESSAGE)
-                    navController.popBackStack()
+                    // Report the hit/miss instead of reporting an error into a
+                    // flow the bin and kept screens never render: on a miss the
+                    // viewer stays open and shows the notice itself.
+                    if (hit != null) navController.popBackStack()
+                    hit != null
                 },
                 onDeleteOrDeleteNow = { uri ->
                     val key = uri.toString()
@@ -614,12 +604,12 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                             mediaItems.find { it.uri == uri }
                                 ?.also { viewModel.markForDeletion(it) }
                     }
-                    if (hit == null) viewModel.reportError(ITEM_GONE_MESSAGE)
-                    navController.popBackStack()
+                    if (hit != null) navController.popBackStack()
+                    hit != null
                 },
                 onDismiss = { navController.popBackStack() },
-                galleryItems = fullscreenGalleryItems,
-                initialIndex = fullscreenInitialIndex
+                galleryItems = galleryItems,
+                initialIndex = initialIndex
             )
         }
     }
