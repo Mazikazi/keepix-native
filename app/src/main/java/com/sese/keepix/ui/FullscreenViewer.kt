@@ -160,6 +160,16 @@ fun FullscreenViewer(
 
     var opened by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
+
+    // True while the single-item viewer's keep/delete/dismiss fly-off is
+    // animating. Hoisted here (rather than `remember`ed inline at the
+    // SingleItemViewer call site) so the close transition below can see it:
+    // without this, the transition's own finishedListener could pop the back
+    // stack before the fly-off's listener gets a chance to run the action --
+    // see that listener for the full story. Stays false for the whole of
+    // gallery mode, which never touches it.
+    val isFlyingOff = remember { mutableStateOf(false) }
+
     var showControls by remember { mutableStateOf(true) }
 
     // Bumped by any control interaction so the auto-fade timer restarts.
@@ -207,7 +217,13 @@ fun FullscreenViewer(
         },
         label = "mediaSpotlight",
         finishedListener = {
-            if (closing) onDismiss()
+            // Skipped while a single-item fly-off is in flight: that fly-off
+            // owns delivering onDismiss (see SingleItemViewer) once its own
+            // action has actually run, since this transition's tween (180ms)
+            // finishes before the fly-off's (200ms) and would otherwise pop
+            // the back stack -- and cancel the fly-off's animation -- before
+            // the keep/delete/restore ever happens.
+            if (closing && !isFlyingOff.value) onDismiss()
         }
     )
     val controlsAlpha = ((transitionProgress - 0.55f) / 0.45f).coerceIn(0f, 1f)
@@ -356,18 +372,33 @@ fun FullscreenViewer(
                     screenWidthPx = screenWidthPx,
                     screenHeightPx = screenHeightPx,
                     transitionProgress = transitionProgress,
-                    isFlyingOff = remember { mutableStateOf(false) },
+                    isFlyingOff = isFlyingOff,
                     controlsVisible = showControls && !closing,
                     onShowControlsToggle = { showControls = !showControls },
                     onZoomChanged = { pageZoomed = it },
                     onKeepOrRestore = {
-                        if (!onKeepOrRestore(mediaUri)) actionNotice = ITEM_GONE_NOTICE
+                        val hit = onKeepOrRestore(mediaUri)
+                        if (!hit) actionNotice = ITEM_GONE_NOTICE
+                        hit
                     },
                     onDeleteOrDeleteNow = {
-                        if (!onDeleteOrDeleteNow(mediaUri)) actionNotice = ITEM_GONE_NOTICE
+                        val hit = onDeleteOrDeleteNow(mediaUri)
+                        if (!hit) actionNotice = ITEM_GONE_NOTICE
+                        hit
                     },
-                    onDismiss = { startDismiss() },
+                    // The real pop, passed straight through: a fly-off that
+                    // actually completes (a vertical dismiss, or the
+                    // defensive fallback below) delivers it directly rather
+                    // than through `startDismiss`, which would be a no-op by
+                    // the time it matters here (onSetClosing already flipped
+                    // `closing` when the fly-off started).
+                    onDismiss = onDismiss,
                     onSetClosing = { closing = true; showControls = false },
+                    // Miss: the action's target row was already gone. Undo
+                    // the close so the viewer stays open, the media container
+                    // re-enters, and the "item gone" notice (gated on
+                    // !closing) can actually render.
+                    onFlyOffMiss = { closing = false; showControls = true },
                     onInteraction = { interactionTick++ }
                 )
             }
@@ -741,7 +772,12 @@ private fun GalleryPager(
     ) { page ->
         val isActive = page == pagerState.currentPage
         ViewerMediaContent(
-            item = items[page],
+            // `items` is a live list since a recent refactor, so it is no
+            // longer provably in sync with the page count for the whole
+            // composition's life. No out-of-range read has actually been
+            // demonstrated, but getOrNull + a blank fallback is free
+            // hardening against a page briefly outliving its row.
+            item = items.getOrNull(page) ?: GalleryItem(Uri.EMPTY, isVideo = false),
             isActive = isActive,
             controlsVisible = controlsVisible,
             // The pager owns horizontal drags at scale 1; leaving them
@@ -762,6 +798,20 @@ private fun GalleryPager(
 // Single item viewer
 // ---------------------------------------------------------------------------
 
+/**
+ * The single-item (non-gallery) media viewer, with its own left/right
+ * keep-delete swipe and up-swipe dismiss.
+ *
+ * The two fly-off animations below ([animatedFlyOffX] for keep/delete,
+ * [animatedFlyOffY] for the vertical dismiss) each own delivering their own
+ * outcome through their `finishedListener` -- the action for X, the real
+ * [onDismiss] for Y -- rather than leaving it to the entry/exit transition in
+ * [FullscreenViewer]. That transition's tween is 180ms, shorter than either
+ * fly-off's 200ms, so letting it pop the back stack unconditionally would
+ * cancel whichever fly-off was still in flight before its listener ever ran.
+ * [isFlyingOff] (hoisted into the caller) is what tells that transition to
+ * hold off.
+ */
 @Composable
 private fun SingleItemViewer(
     mediaUri: Uri,
@@ -773,13 +823,20 @@ private fun SingleItemViewer(
     controlsVisible: Boolean,
     onShowControlsToggle: () -> Unit,
     onZoomChanged: (Boolean) -> Unit,
-    onKeepOrRestore: () -> Unit,
-    onDeleteOrDeleteNow: () -> Unit,
+    /** Returns whether the target row was actually found (a miss stays open). */
+    onKeepOrRestore: () -> Boolean,
+    /** Returns whether the target row was actually found (a miss stays open). */
+    onDeleteOrDeleteNow: () -> Boolean,
+    /** The real dismiss (pops the back stack) -- see the class doc above. */
     onDismiss: () -> Unit,
     onSetClosing: () -> Unit,
+    /** A keep/delete fly-off missed: undo the close so the viewer stays open. */
+    onFlyOffMiss: () -> Unit,
     onInteraction: () -> Unit
 ) {
-    val swipeThresholdRatio = 0.3f
+    // TRD §3.3 / SwipeScreen.kt's card commits at 0.4x screen width; kept in
+    // sync here so the same gesture takes the same travel in both places.
+    val swipeThresholdRatio = 0.4f
     val flyOffDistance = 2000f
     val swipeThreshold = screenWidthPx * swipeThresholdRatio
 
@@ -789,16 +846,41 @@ private fun SingleItemViewer(
     var flyOffOffsetX by remember { mutableFloatStateOf(0f) }
     var flyOffOffsetY by remember { mutableFloatStateOf(0f) }
 
+    // Tween while flying out, spring while returning home after a miss --
+    // the target is 0f in both the "at rest" and "returning" cases, so this
+    // is the only place that distinguishes them.
+    val flyOffXSpec: AnimationSpec<Float> = if (flyOffOffsetX == 0f) {
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+    } else {
+        tween(durationMillis = 200, easing = FastOutLinearInEasing)
+    }
+
     val animatedFlyOffX by animateFloatAsState(
         targetValue = flyOffOffsetX,
-        animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing),
+        animationSpec = flyOffXSpec,
         label = "flyOffX",
         finishedListener = {
             if (isFlyingOff.value) {
-                when {
+                // else branch: X's target can only be nonzero here (see the
+                // guard in triggerFlyOff / the animateFloatAsState skip when
+                // a target repeats), but a direct pop is the safe fallback
+                // over leaving the viewer stuck if that ever stops holding.
+                val hit = when {
                     flyOffOffsetX > 0f -> onKeepOrRestore()
                     flyOffOffsetX < 0f -> onDeleteOrDeleteNow()
-                    flyOffOffsetY < 0f -> onDismiss()
+                    else -> { onDismiss(); true }
+                }
+                if (!hit) {
+                    isFlyingOff.value = false
+                    flyOffOffsetX = 0f
+                    flyOffOffsetY = 0f
+                    // translationX/Y in mediaTransform is swipeOffset +
+                    // animatedFlyOff -- resetting only the fly-off half would
+                    // spring the photo back to wherever the finger let go
+                    // instead of to center.
+                    swipeOffsetX = 0f
+                    swipeOffsetY = 0f
+                    onFlyOffMiss()
                 }
             }
         }
@@ -806,7 +888,16 @@ private fun SingleItemViewer(
     val animatedFlyOffY by animateFloatAsState(
         targetValue = flyOffOffsetY,
         animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing),
-        label = "flyOffY"
+        label = "flyOffY",
+        finishedListener = {
+            // The vertical (swipe-up) dismiss has no target row to miss on,
+            // so it always delivers the real pop here. X's own listener above
+            // never fires for a pure vertical trigger -- its target (0f)
+            // never changes, so animateFloatAsState skips both the animation
+            // and this listener for it entirely -- this is the only delivery
+            // path for that case.
+            if (isFlyingOff.value) onDismiss()
+        }
     )
 
     fun triggerFlyOff(direction: Float, isVertical: Boolean = false) {
@@ -1085,8 +1176,13 @@ private fun ViewerMediaContent(
                             // is a delta between two points converted through
                             // the same matrix, so it is transform-immune; this
                             // is what SwipeScreen already does. IgnoreConsumed
-                            // so the total stays the finger's true travel even
-                            // once the pager starts consuming.
+                            // is not protecting against the pager: pointer
+                            // event passes run child-before-parent on Main,
+                            // so this handler (the pager's child) always runs
+                            // before the pager could consume anything, and
+                            // positionChange() would read identically here.
+                            // It is defensive margin against that ordering
+                            // assumption changing, not a fix for a live bug.
                             val delta = change.positionChangeIgnoreConsumed()
                             totalX += delta.x
                             totalY += delta.y
