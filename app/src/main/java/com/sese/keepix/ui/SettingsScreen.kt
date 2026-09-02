@@ -29,6 +29,11 @@ fun SettingsScreen(
     binCount: Int,
     onRetentionChanged: (Int) -> Unit,
     onEmptyBin: () -> Unit,
+    // True only on API 34+ when the user chose "Select photos…" instead of
+    // "Allow all": the app functions normally against that reduced set (see
+    // checkMediaPermission's doc in MainActivity.kt), but the swipe queue
+    // will look incomplete unless the user understands why.
+    hasOnlyPartialMediaAccess: Boolean = false,
     onBack: () -> Unit
 ) {
     var sliderValue by remember { mutableFloatStateOf(currentRetentionDays.toFloat()) }
@@ -71,6 +76,24 @@ fun SettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
+                if (hasOnlyPartialMediaAccess) {
+                    Surface(
+                        color = BadgeOrange.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "You've given Keepix access to a limited " +
+                                "selection of photos. To see your full library, " +
+                                "allow full access in system Settings.",
+                            color = BadgeOrange,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
                 // DELETION section
                 Text(
                     text = "DELETION",

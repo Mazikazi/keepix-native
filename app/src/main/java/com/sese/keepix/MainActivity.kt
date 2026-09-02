@@ -62,28 +62,82 @@ private const val TAG = "MainActivity"
 private const val MAX_DELETE_REQUEST_BATCH = 750
 
 
-/** The media permission(s) this app needs to request, version-gated. */
+/**
+ * The media permission(s) this app requests, version-gated.
+ *
+ * On API 34+ (`UPSIDE_DOWN_CAKE`), the system grant dialog can offer
+ * "Select photos…" instead of "Allow all", which grants ONLY
+ * `READ_MEDIA_VISUAL_USER_SELECTED` and reports both `READ_MEDIA_IMAGES` and
+ * `READ_MEDIA_VIDEO` as denied. Requesting it alongside the other two lets
+ * the picker offer that option explicitly; [checkMediaPermission] below is
+ * what makes a grant of just this one still count as "has access" — see its
+ * doc for why that agreement matters.
+ */
 private fun requiredMediaPermissions(): Array<String> =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-    } else {
-        // WRITE_EXTERNAL_STORAGE is not in the manifest (scoped storage +
-        // createDeleteRequest cover deletion instead) — requesting it here
-        // would make Android report it denied and
-        // `permissions.entries.all { it.value }` would never be true on
-        // API 30-32, the floor of minSdk 30.
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        else -> {
+            // WRITE_EXTERNAL_STORAGE is not in the manifest (scoped storage +
+            // createDeleteRequest cover deletion instead) — requesting it here
+            // would make Android report it denied and
+            // `permissions.entries.all { it.value }` would never be true on
+            // API 30-32, the floor of minSdk 30.
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
     }
 
 /**
  * Whether the app currently holds the media read permission(s) it needs.
- * Pulled out so both the initial state and the `ON_RESUME` recheck (for
- * returning from system Settings) share one source of truth.
+ * Pulled out so both the initial state, the permission-request callback, and
+ * the `ON_RESUME` recheck (for returning from system Settings) share one
+ * source of truth — a disagreement between what is REQUESTED and what is
+ * checked for SUCCESS is exactly the shape of the original P0 this app
+ * shipped with (a request array that could never fully satisfy its own
+ * success condition).
+ *
+ * On API 34+, a grant of ONLY `READ_MEDIA_VISUAL_USER_SELECTED` (the
+ * "Select photos…" option) counts as having access, not just a full grant of
+ * both `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO`: `MediaStore` queries then
+ * simply return the user-selected subset, which this app already handles
+ * correctly since it queries `MediaStore` the same way regardless of which
+ * grant produced the visible set.
  */
-private fun checkMediaPermission(context: Context): Boolean =
-    requiredMediaPermissions().all {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+private fun checkMediaPermission(context: Context): Boolean {
+    fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        val fullAccess = granted(Manifest.permission.READ_MEDIA_IMAGES) &&
+            granted(Manifest.permission.READ_MEDIA_VIDEO)
+        val partialAccess = granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        return fullAccess || partialAccess
     }
+    return requiredMediaPermissions().all { granted(it) }
+}
+
+/**
+ * True when the app's only media access is the API 34+ "Select photos…"
+ * partial grant (some, not all, of `READ_MEDIA_VISUAL_USER_SELECTED`/
+ * `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO`) rather than the full pair. Used
+ * only to inform the user in Settings why their library may look
+ * incomplete — [checkMediaPermission] already treats this state as full
+ * access for every functional purpose.
+ */
+private fun hasOnlyPartialMediaAccess(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return false
+    fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    val fullAccess = granted(Manifest.permission.READ_MEDIA_IMAGES) &&
+        granted(Manifest.permission.READ_MEDIA_VIDEO)
+    val partialAccess = granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    return partialAccess && !fullAccess
+}
 
 /**
  * Unwraps a possibly-wrapped [Context] to find the [Activity] hosting it, if
@@ -134,6 +188,21 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // Permission state
     var hasPermission by remember { mutableStateOf(checkMediaPermission(context)) }
     var isPermanentlyDenied by remember { mutableStateOf(false) }
+
+    // Mirrors viewModel.prefs.fullscreenTutorialComplete as Compose state.
+    // The prefs property itself is a plain SharedPreferences-backed
+    // getter/setter with no observability -- writing it does not, on its
+    // own, trigger recomposition of anything. FullscreenViewer's own
+    // GestureTutorialOverlay never clears its internal `visible`, so without
+    // this mirror, tapping the overlay to dismiss it wrote the pref but left
+    // the fullscreen destination composed with a stale `tutorialComplete =
+    // false`, and the overlay stayed on screen until some unrelated
+    // recomposition happened to re-read the pref. Read once at first
+    // composition and flipped alongside the pref write in
+    // onTutorialDismiss below.
+    var tutorialComplete by remember {
+        mutableStateOf(viewModel.prefs.fullscreenTutorialComplete)
+    }
 
     // Ids of the request currently awaiting a result from the system delete
     // dialog. Doubles as the in-flight guard against a double-launch (see the
@@ -186,7 +255,17 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions.entries.all { it.value }
+        // Re-derive from the live permission state via checkMediaPermission
+        // rather than `permissions.entries.all { it.value }`: on API 34+,
+        // choosing "Select photos…" grants ONLY
+        // READ_MEDIA_VISUAL_USER_SELECTED and reports the other two
+        // requested permissions as denied, so an `.all { }` over the launch
+        // result would never be true for that (very common) choice and would
+        // strand the user on the permission screen with no explanation —
+        // the exact shape of the original P0. checkMediaPermission is the
+        // single place that decision is made, shared with the initial state
+        // and the ON_RESUME recheck below.
+        val granted = checkMediaPermission(context)
         hasPermission = granted
         if (!granted) {
             // Once the system will no longer show a rationale for ANY of the
@@ -400,6 +479,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val error by viewModel.error.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val reachedEnd by viewModel.reachedEnd.collectAsState()
+    val hasLoadedOnce by viewModel.hasLoadedOnce.collectAsState()
 
     // Task 5: whether a fullscreen viewer is currently the top destination --
     // used only to pause SwipeScreen's autoplaying top-card video while it's
@@ -478,6 +558,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 onErrorDismiss = { viewModel.clearError() },
                 isLoading = isLoading,
                 reachedEnd = reachedEnd,
+                hasLoadedOnce = hasLoadedOnce,
                 onRetry = { viewModel.loadMedia() },
                 isFullscreenOpen = isFullscreenOpen
             )
@@ -513,11 +594,19 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
 
         composable("settings") {
+            // Recomputed off hasPermission (checkMediaPermission's own key)
+            // rather than cached once: a user who leaves for Settings to
+            // upgrade from a partial to a full grant and comes back should
+            // see this notice go away without restarting the app.
+            val hasOnlyPartialAccess = remember(hasPermission) {
+                hasOnlyPartialMediaAccess(context)
+            }
             SettingsScreen(
                 currentRetentionDays = viewModel.prefs.retentionDays,
                 binCount = binCount,
                 onRetentionChanged = { days -> viewModel.prefs.retentionDays = days },
                 onEmptyBin = { viewModel.deleteBinItems(binItems) },
+                hasOnlyPartialMediaAccess = hasOnlyPartialAccess,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -566,8 +655,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 isVideo = isVideo,
                 mode = mode,
                 transitionBounds = selectedMediaBounds,
-                tutorialComplete = viewModel.prefs.fullscreenTutorialComplete,
-                onTutorialDismiss = { viewModel.prefs.fullscreenTutorialComplete = true },
+                tutorialComplete = tutorialComplete,
+                onTutorialDismiss = {
+                    viewModel.prefs.fullscreenTutorialComplete = true
+                    tutorialComplete = true
+                },
                 // Both callbacks take the URI of the item actually on screen.
                 // In gallery mode that is whichever page the pager has settled
                 // on, NOT the item that was originally tapped -- paging to
@@ -575,11 +667,14 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // entry, not the one the route was built from.
                 onKeepOrRestore = { uri ->
                     val key = uri.toString()
-                    // galleryItems is a tap-time snapshot while binItems/
-                    // keptItems are live flows, so an expiry or cleanup pass
-                    // firing while the viewer is open can retire the row out
-                    // from under us. Report the miss rather than closing the
-                    // viewer and silently doing nothing.
+                    // binItems/keptItems are live flows -- and galleryItems
+                    // above is derived from them on every recomposition, not
+                    // a tap-time snapshot (see that definition) -- so an
+                    // expiry or cleanup pass firing while the viewer is open
+                    // can still retire the row out from under us between the
+                    // last recomposition and this callback running. Report
+                    // the miss rather than closing the viewer and silently
+                    // doing nothing.
                     val hit = when (mode) {
                         ViewerMode.BIN ->
                             binItems.find { it.mediaUri == key }

@@ -102,7 +102,7 @@ fun KeptItemsScreen(
                     contentPadding = PaddingValues(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(items) { keptItem ->
+                    items(items, key = { it.id }) { keptItem ->
                         KeptGridItem(
                             item = keptItem,
                             onClick = { onItemTap(keptItem) },

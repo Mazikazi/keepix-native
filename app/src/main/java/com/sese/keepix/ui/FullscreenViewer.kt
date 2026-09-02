@@ -764,6 +764,18 @@ private fun GalleryPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
         beyondViewportPageCount = 1,
+        // Keyed by the item's own URI, not the default (page index). `items`
+        // is a live list -- if a row is dropped while the viewer is open
+        // (an expiry firing, a confirmed deletion), every index after it
+        // shifts by one. Keying by index would make Compose treat "page 3"
+        // as the same node before and after the shift and merely update its
+        // content -- which for VideoSurface below does NOT re-run the
+        // AndroidView factory (see its own key comment), leaving a
+        // VideoView playing the file that used to be at that index. Keying
+        // by URI instead makes each page's identity travel with its item:
+        // a shift retires the old node entirely and composes a fresh one for
+        // whatever now lands at that index.
+        key = { page -> items.getOrNull(page)?.uri ?: page },
         // Belt-and-braces with the per-page gesture handler below: while the
         // visible page is zoomed the pager must not scroll at all, so a pan
         // that reaches the image edge stops there instead of rubber-banding
@@ -1370,13 +1382,18 @@ private fun VideoSurface(
     isActive: Boolean,
     modifier: Modifier = Modifier
 ) {
-    // Keyed on Unit, not uri, deliberately. AndroidView's factory runs once per
-    // node, so `uri` is baked into this VideoView for its whole life — and it
-    // never has to change: HorizontalPager keys pages by index over a list that
-    // is fixed for the viewer's lifetime, and the single-item path takes its URI
-    // from an immutable nav argument. Keying on `uri` would suggest a re-key
-    // path that cannot happen and whose disposal could race the next factory
-    // call into nulling out the *new* view's reference.
+    // Keyed on Unit, not uri, here -- not because uri can't change under this
+    // composable, but because it doesn't need to be this effect's key for
+    // that. AndroidView's factory runs once per NODE, and node identity is
+    // what changes uri now: GalleryPager's HorizontalPager keys each page by
+    // `items[page].uri` (not by index -- see that call site), so a distinct
+    // URI always gets a brand-new page node, a brand-new VideoSurface, and a
+    // fresh run of this factory; an index shift from a dropped row retires
+    // the old node instead of updating it in place. The single-item path
+    // similarly takes its URI from an immutable nav argument. Keying this
+    // DisposableEffect on `uri` in addition would be redundant, not
+    // additionally correct -- by the time `uri` could differ, this is
+    // already a different composable instance.
     DisposableEffect(Unit) {
         onDispose {
             state.videoView?.stopPlayback()

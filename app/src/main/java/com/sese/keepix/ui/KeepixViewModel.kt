@@ -35,6 +35,18 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // False until the first loadMedia() call has completed, success or
+    // failure. SwipeScreen needs this to tell "nothing loaded yet" (cold
+    // start's first frame, before loadMedia()'s LaunchedEffect-launched
+    // coroutine has had a chance to flip isLoading true) apart from "a load
+    // genuinely failed" -- both look identical as
+    // (mediaItems=[], isLoading=false, reachedEnd=false) without this flag,
+    // which flashed a failure screen on every cold start. Never reset back
+    // to false once set: it answers "has the initial load ever finished",
+    // not "is one in flight right now" (that's isLoading).
+    private val _hasLoadedOnce = MutableStateFlow(false)
+    val hasLoadedOnce: StateFlow<Boolean> = _hasLoadedOnce.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -102,11 +114,12 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private var pageCursor: MediaPageKey? = null
 
     // True once a getMediaPage call has returned fewer rows than requested --
-    // MediaRepository's contract for "nothing older remains". This, not
-    // mediaCount, is what pagination termination relies on: it's read
-    // directly off the actual query result on every call, so it can't go
-    // stale the way a count snapshotted once at loadMedia() time can (e.g.
-    // after the user empties the bin and confirms deletion mid-session).
+    // MediaRepository's contract for "nothing older remains". This is what
+    // pagination termination relies on -- the ONLY termination signal, there
+    // is no row-count check anywhere in this class: it's read directly off
+    // the actual query result on every call, so it can't go stale the way a
+    // count snapshotted once at loadMedia() time can (e.g. after the user
+    // empties the bin and confirms deletion mid-session).
     //
     // Exposed as a StateFlow (not a plain var) so SwipeScreen's empty state
     // can tell "genuinely finished" (reachedEnd true) apart from "queue
@@ -114,11 +127,6 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     // the latter needs a retry affordance, the former doesn't.
     private val _reachedEnd = MutableStateFlow(false)
     val reachedEnd: StateFlow<Boolean> = _reachedEnd.asStateFlow()
-
-    // Cached once per loadMedia() purely for a "remaining" style display
-    // value if one is ever wanted; never consulted for pagination termination
-    // (see reachedEnd above).
-    private var mediaCount = 0
 
     // Every media id ever delivered into _mediaItems this session (whether
     // still present or already swiped away). Grows for the life of the
@@ -212,7 +220,6 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 binMediaIds = binItemDao.getAllBinMediaIds().toSet()
                 keptMediaIds = keptItemDao.getAllKeptMediaIds().toSet()
-                mediaCount = repository.getMediaCount()
                 pageCursor = null
                 _reachedEnd.value = false
                 seenMediaIds = mutableSetOf()
@@ -227,6 +234,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 batchLoadInFlight = false
                 _isLoading.value = false
+                _hasLoadedOnce.value = true
             }
         }
     }
@@ -262,8 +270,9 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 if (page.size < batchSize) {
                     // MediaRepository's termination contract: fewer rows than
                     // requested means nothing older is left. Read directly off
-                    // this result, not off mediaCount (which a confirmed bin
-                    // deletion or external change can make stale mid-session).
+                    // this result -- a snapshotted total would go stale the
+                    // moment a confirmed bin deletion or external change
+                    // mutated the device library mid-session.
                     _reachedEnd.value = true
                 }
                 if (page.isEmpty()) break

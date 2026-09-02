@@ -192,7 +192,6 @@ class KeepixViewModelPaginationTest {
     @Test
     fun `loadMedia excludes bin and kept ids and tops up until batchSize is met`() {
         val repository = mockk<MediaRepository>()
-        coEvery { repository.getMediaCount() } returns 7
         coEvery { repository.getMediaPage(null, 5) } returns listOf(
             mediaItem(1, 500), mediaItem(2, 400), mediaItem(3, 300),
             mediaItem(4, 200), mediaItem(5, 100)
@@ -240,7 +239,6 @@ class KeepixViewModelPaginationTest {
         // the page just consumed -- using only dateAdded here would either
         // re-deliver or skip whichever row of the tied pair sorted second.
         val repository = mockk<MediaRepository>()
-        coEvery { repository.getMediaCount() } returns 2
         coEvery { repository.getMediaPage(null, 5) } returns listOf(
             mediaItem(10, 1000), mediaItem(9, 1000) // tie on dateAdded=1000, _ID DESC breaks it
         )
@@ -270,7 +268,6 @@ class KeepixViewModelPaginationTest {
         // exercising the separate `if (page.isEmpty()) break` branch rather
         // than merely the `page.size < limit` one.
         val repository = mockk<MediaRepository>()
-        coEvery { repository.getMediaCount() } returns 5
         coEvery { repository.getMediaPage(null, 5) } returns listOf(
             mediaItem(1, 500), mediaItem(2, 400), mediaItem(3, 300),
             mediaItem(4, 200), mediaItem(5, 100)

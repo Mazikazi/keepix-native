@@ -19,10 +19,4 @@ interface KeptItemDao {
 
     @Delete
     suspend fun delete(item: KeptItemEntity)
-
-    @Query("DELETE FROM kept_items WHERE id IN (:ids)")
-    suspend fun deleteByIds(ids: List<Int>)
-
-    @Query("DELETE FROM kept_items")
-    suspend fun clearAll()
 }

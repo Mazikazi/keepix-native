@@ -83,6 +83,17 @@ fun SwipeScreen(
     // that hasn't wired it up yet degrades to the old empty-state look
     // rather than showing a bogus error.
     reachedEnd: Boolean = true,
+    // False until the very first loadMedia() call has completed (success or
+    // failure). Cold start on a returning user (startDestination == "swipe")
+    // composes this screen with mediaItems=[], isLoading=false, reachedEnd=
+    // false on its very first frame -- loadMedia() only flips isLoading true
+    // from inside a LaunchedEffect's coroutine body, which cannot have run
+    // yet at that point. Without this flag that first frame fell into the
+    // branch below meant for a genuine load FAILURE, flashing "Couldn't load
+    // your library" for one frame on every cold start. Defaults to true so a
+    // caller that hasn't wired it up degrades to the old behavior, matching
+    // reachedEnd's own default.
+    hasLoadedOnce: Boolean = true,
     onRetry: () -> Unit = {},
     // True while a fullscreen viewer is open above this screen. Used only to
     // pause the top card's autoplaying video -- otherwise it keeps playing
@@ -343,11 +354,14 @@ fun SwipeScreen(
                     }
                 }
             }
-        } else if (isLoading) {
-            // Initial load in flight -- nothing to show yet (Defect 8). Kept
-            // separate from the mediaItems-empty branch below so the two
-            // never get confused: this one is purely "no data yet", the one
-            // below is "loaded, and the queue really is empty".
+        } else if (isLoading || !hasLoadedOnce) {
+            // Initial load in flight -- nothing to show yet (Defect 8) -- OR
+            // the very first loadMedia() hasn't even completed once yet
+            // (!hasLoadedOnce), which covers the one-frame gap between this
+            // screen's first composition and isLoading actually flipping
+            // true. Kept separate from the mediaItems-empty branch below so
+            // the two never get confused: this one is purely "no data yet",
+            // the one below is "loaded, and the queue really is empty".
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,

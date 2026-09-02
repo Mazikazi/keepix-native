@@ -125,11 +125,11 @@ object ViewModelTestHarness {
         setField(vm, "_sessionKeptCount", MutableStateFlow(0))
         setField(vm, "_promptedThisSession", MutableStateFlow(false))
         setField(vm, "_reachedEnd", MutableStateFlow(false))
+        setField(vm, "_hasLoadedOnce", MutableStateFlow(false))
         setField(vm, "binMediaIds", emptySet<Long>())
         setField(vm, "keptMediaIds", emptySet<Long>())
         setField(vm, "seenMediaIds", mutableSetOf<Long>())
         setField<Any?>(vm, "pageCursor", null)
-        setField(vm, "mediaCount", 0)
         setField(vm, "batchLoadInFlight", false)
         return vm
     }

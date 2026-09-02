@@ -70,41 +70,15 @@ class MediaRepository(private val context: Context) {
     private val collection: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
     /**
-     * Total number of images + videos in the device library, for DISPLAY
-     * PURPOSES ONLY (e.g. a "X remaining of Y" indicator). It is a snapshot
-     * that goes stale the moment the set mutates -- a confirmed bin deletion
-     * drops rows immediately, an external app can add/remove photos at any
-     * time -- so pagination termination in [getMediaPage] never depends on
-     * this value; see that function's doc for the actual termination signal.
-     */
-    suspend fun getMediaCount(): Int = withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.query(
-                collection,
-                arrayOf(MediaStore.Files.FileColumns._ID),
-                baseSelection,
-                baseSelectionArgs,
-                null
-            )?.use { cursor -> cursor.count } ?: 0
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Permission denied accessing media", e)
-            throw MediaAccessException("Permission denied. Please grant media access.", e)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to count media items", e)
-            throw MediaAccessException("Failed to load media: ${e.message}", e)
-        }
-    }
-
-    /**
      * Reads up to [limit] rows strictly older, in DATE_ADDED DESC, _ID DESC
      * order, than [after] -- or the newest [limit] rows if [after] is null.
      *
      * Termination contract for callers: a page whose size is less than
      * [limit] (including empty) means there is nothing older left in the
      * device library. This is read directly off the actual query result, not
-     * inferred from [getMediaCount], and holds even if rows were deleted or
-     * added anywhere in the ordering between calls -- keyset pagination only
-     * ever looks strictly after the last key it saw.
+     * off any separately-fetched total row count, and holds even if rows
+     * were deleted or added anywhere in the ordering between calls -- keyset
+     * pagination only ever looks strictly after the last key it saw.
      *
      * Uses the Bundle-based `ContentResolver.query(Uri, Array<String>?,
      * Bundle, CancellationSignal?)` overload: `QUERY_ARG_LIMIT` requires API

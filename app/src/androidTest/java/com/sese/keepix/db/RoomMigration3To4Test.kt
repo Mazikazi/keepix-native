@@ -209,22 +209,24 @@ class RoomMigration3To4Test {
 
     /**
      * [AppDatabase.getDatabase]'s cache is a private `@Volatile var INSTANCE`
-     * on its companion object. Kotlin stores that field on the generated
-     * `AppDatabase$Companion` instance, not on `AppDatabase` itself, so it's
-     * reached via the `Companion` field first. Resetting it forces the next
-     * `getDatabase()` call to rebuild -- otherwise a prior test (in this
-     * class or another one sharing this instrumentation process, e.g.
-     * `RestoreSwipeQueueTest`, which also calls `getDatabase()` indirectly
-     * via `KeepixViewModel`) could hand back an already-open instance and
-     * this test would silently pass without ever touching the file we seeded.
+     * declared inside its companion object. Verified against the compiled
+     * bytecode (`javap`): Kotlin actually places that backing field as a
+     * static field directly on the OUTER class -- `AppDatabase` -- not on the
+     * generated `AppDatabase$Companion` class, which carries no fields at
+     * all. So it's reached directly via `AppDatabase::class.java`, not
+     * through a `Companion` field first (an earlier version of this helper
+     * assumed the latter and threw `NoSuchFieldException` on `INSTANCE` since
+     * `Companion` has none). Resetting it forces the next `getDatabase()`
+     * call to rebuild -- otherwise a prior test (in this class or another one
+     * sharing this instrumentation process, e.g. `RestoreSwipeQueueTest`,
+     * which also calls `getDatabase()` indirectly via `KeepixViewModel`)
+     * could hand back an already-open instance and this test would silently
+     * pass without ever touching the file we seeded.
      */
     private fun resetGetDatabaseSingleton() {
-        val companionField = AppDatabase::class.java.getDeclaredField("Companion")
-        companionField.isAccessible = true
-        val companion = companionField.get(null)
-        val instanceField = companion.javaClass.getDeclaredField("INSTANCE")
-        instanceField.isAccessible = true
-        instanceField.set(companion, null)
+        AppDatabase::class.java.getDeclaredField("INSTANCE").apply {
+            isAccessible = true
+        }.set(null, null)
     }
 
     private suspend fun firstPendingDeletionSnapshot(dao: BinItemDao): List<BinItemEntity> =
