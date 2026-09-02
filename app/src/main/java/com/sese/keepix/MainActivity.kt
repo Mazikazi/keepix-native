@@ -904,6 +904,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             KeptItemsScreen(
                 items = keptItems,
                 onUnkeep = { item -> viewModel.unkeepItem(item) },
+                onToggleFavorite = { item -> viewModel.toggleFavorite(item) },
                 onItemTap = { item ->
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.KEPT.routeKey}"
