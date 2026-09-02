@@ -127,8 +127,28 @@ A gold **★ FAVORITE** badge fades in on up-drag, driven by the same drag-progr
 value as the existing KEEP and DELETE badges. `OutgoingSwipeCard` gains a vertical
 fly-off direction.
 
-A third ★ button sits between DELETE and KEEP, routed through `performSwipe` so
-gesture and tap remain indistinguishable, with a content description.
+**Both input methods are required, and are equals.** Gestures and buttons are not
+alternatives to each other — the PRD requires the buttons explicitly for users who
+do not want to swipe, so they must be a genuine equivalent rather than a degraded
+fallback.
+
+The existing bottom pill holds two buttons. A third ★ button is inserted **in the
+middle**:
+
+```
+before:   [ ✕ DELETE ]                    [ ✓ KEEP ]
+after:    [ ✕ DELETE ]   [ ★ FAVORITE ]   [ ✓ KEEP ]
+```
+
+Same 56dp circle, same glass pill, same `Arrangement.spacedBy(32.dp)`; gold fill
+from the new overlay color, matching how DELETE and KEEP take
+`DeleteRedOverlay` / `KeepGreenOverlay`. Three 56dp buttons with 32dp gaps and
+24dp padding measure 280dp, so the row still fits comfortably on a narrow phone.
+
+Every button routes through the same `performSwipe` the drag gesture calls, so tap
+and swipe are indistinguishable in animation and outcome, and the existing
+`swipeInProgress` guard covers rapid taps and a tap racing a drag on the same card.
+Each button carries a content description.
 
 ### 7.2 Kept screen
 
