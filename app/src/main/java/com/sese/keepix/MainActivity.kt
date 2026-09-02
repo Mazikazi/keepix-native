@@ -859,6 +859,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 mediaItems = mediaItems,
                 onSwipedLeft = { item -> viewModel.markForDeletion(item) },
                 onSwipedRight = { item -> viewModel.keepMedia(item) },
+                onSwipedUp = { item -> viewModel.favoriteMedia(item) },
                 onNavigateToBin = { navController.navigate("bin") },
                 onNavigateToKept = { navController.navigate("kept") },
                 onNavigateToSettings = { navController.navigate("settings") },

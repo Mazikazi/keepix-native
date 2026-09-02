@@ -15,6 +15,8 @@ val KeepGreen = Color(0xFF4CAF50)
 val KeepGreenOverlay = Color(0xBF4CAF50)  // 75%
 val DeleteRed = Color(0xFFF44336)
 val DeleteRedOverlay = Color(0xBFF44336)  // 75%
+val FavoriteGold = Color(0xFFFFC107)
+val FavoriteGoldOverlay = Color(0xBFFFC107)  // 75%
 
 // Text
 val TextPrimary = Color(0xFFF5F5F5)

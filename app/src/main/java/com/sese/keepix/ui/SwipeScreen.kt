@@ -48,12 +48,35 @@ import kotlin.math.roundToInt
 import android.media.MediaPlayer
 import android.view.ViewGroup
 import android.widget.VideoView
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.ui.geometry.Offset
+
+enum class SwipeAction { DELETE, KEEP, FAVORITE }
+
+/**
+ * Which action a released drag commits to, or null to spring back.
+ *
+ * Horizontal wins ties (`>=`): keep/delete are the common outcomes and favorite is
+ * deliberate, so an ambiguous diagonal must never silently star an item. Only
+ * upward vertical commits -- downward springs back, leaving room for a future
+ * pull-down gesture without stealing it now.
+ */
+fun resolveSwipeAction(dx: Float, dy: Float, threshold: Float): SwipeAction? {
+    val horizontal = abs(dx) >= abs(dy)
+    return when {
+        horizontal && dx >= threshold -> SwipeAction.KEEP
+        horizontal && dx <= -threshold -> SwipeAction.DELETE
+        !horizontal && dy <= -threshold -> SwipeAction.FAVORITE
+        else -> null
+    }
+}
 
 @Composable
 fun SwipeScreen(
     mediaItems: List<MediaItem>,
     onSwipedLeft: (MediaItem) -> Unit,
     onSwipedRight: (MediaItem) -> Unit,
+    onSwipedUp: (MediaItem) -> Unit = {},
     onNavigateToBin: () -> Unit,
     onNavigateToKept: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -192,16 +215,16 @@ fun SwipeScreen(
             // moment after its swipe was already accepted).
             var swipeInProgress by remember(currentItem.id) { mutableStateOf(false) }
 
-            fun performSwipe(direction: Float, startOffset: Float) {
+            fun performSwipe(action: SwipeAction, startOffset: Offset) {
                 if (swipeInProgress) return
                 swipeInProgress = true
-                outgoingCard = OutgoingCard(currentItem, direction, startOffset)
+                outgoingCard = OutgoingCard(currentItem, action, startOffset)
                 stackProgress = 0f
                 sideLightProgress = 0f
-                if (direction < 0f) {
-                    onSwipedLeft(currentItem)
-                } else {
-                    onSwipedRight(currentItem)
+                when (action) {
+                    SwipeAction.DELETE -> onSwipedLeft(currentItem)
+                    SwipeAction.KEEP -> onSwipedRight(currentItem)
+                    SwipeAction.FAVORITE -> onSwipedUp(currentItem)
                 }
             }
 
@@ -257,9 +280,9 @@ fun SwipeScreen(
                         onBoundsChanged = onCardBoundsChanged,
                         autoplayVideo = currentItem.isVideo && !isFullscreenOpen,
                         interactive = !swipeInProgress,
-                        onSwiped = { direction, startOffset -> performSwipe(direction, startOffset) },
+                        onSwiped = { action, startOffset -> performSwipe(action, startOffset) },
                         onTap = { onTapCard(currentItem) },
-                        onSwipeProgress = { progress ->
+                        onSwipeProgress = { progress, _ ->
                             stackProgress = abs(progress)
                             sideLightProgress = progress
                         }
@@ -301,7 +324,7 @@ fun SwipeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
-                            onClick = { performSwipe(-1f, 0f) },
+                            onClick = { performSwipe(SwipeAction.DELETE, Offset.Zero) },
                             enabled = !swipeInProgress,
                             modifier = Modifier
                                 .size(56.dp)
@@ -314,7 +337,20 @@ fun SwipeScreen(
                             )
                         }
                         IconButton(
-                            onClick = { performSwipe(1f, 0f) },
+                            onClick = { performSwipe(SwipeAction.FAVORITE, Offset.Zero) },
+                            enabled = !swipeInProgress,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(FavoriteGoldOverlay, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "Favorite this item",
+                                tint = Color.White
+                            )
+                        }
+                        IconButton(
+                            onClick = { performSwipe(SwipeAction.KEEP, Offset.Zero) },
                             enabled = !swipeInProgress,
                             modifier = Modifier
                                 .size(56.dp)
@@ -544,8 +580,8 @@ private fun BoxScope.SideSwipeLights(progress: Float) {
 
 private data class OutgoingCard(
     val mediaItem: MediaItem,
-    val direction: Float,
-    val startOffset: Float
+    val action: SwipeAction,
+    val startOffset: Offset
 )
 
 @Composable
@@ -553,30 +589,50 @@ private fun OutgoingSwipeCard(
     card: OutgoingCard,
     onFinished: () -> Unit
 ) {
-    var targetOffset by remember(card.mediaItem.id) { mutableFloatStateOf(card.startOffset) }
-    val animatedOffsetX by animateFloatAsState(
-        targetValue = targetOffset,
+    // The final resting offset for this action's exit direction -- horizontal
+    // for KEEP/DELETE, straight up for FAVORITE.
+    val finalOffset = remember(card.mediaItem.id) {
+        when (card.action) {
+            SwipeAction.KEEP -> Offset(1500f, 0f)
+            SwipeAction.DELETE -> Offset(-1500f, 0f)
+            SwipeAction.FAVORITE -> Offset(0f, -1500f)
+        }
+    }
+    // A single 0f->1f "flight" animatable drives both axes together. Using
+    // one shared progress value (rather than animating offsetX/offsetY
+    // independently) guarantees the animation -- and therefore
+    // finishedListener/onFinished -- always actually runs: a per-axis
+    // animation would silently no-op (and never call onFinished) whenever
+    // that axis's start and end value happen to coincide, e.g. X for a
+    // FAVORITE flight that started from the button (startOffset = Offset.Zero)
+    // where both start and target X are 0.
+    var flight by remember(card.mediaItem.id) { mutableFloatStateOf(0f) }
+    val animatedFlight by animateFloatAsState(
+        targetValue = flight,
         animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing),
         finishedListener = {
-            if (targetOffset != card.startOffset) {
+            if (flight != 0f) {
                 onFinished()
             }
         },
-        label = "outgoingOffsetX"
+        label = "outgoingFlight"
     )
 
     LaunchedEffect(card.mediaItem.id) {
-        targetOffset = 1500f * card.direction
+        flight = 1f
     }
+
+    val animatedOffsetX = card.startOffset.x + (finalOffset.x - card.startOffset.x) * animatedFlight
+    val animatedOffsetY = card.startOffset.y + (finalOffset.y - card.startOffset.y) * animatedFlight
 
     Card(
         modifier = Modifier
             .fillMaxWidth(0.85f)
             .aspectRatio(0.75f)
-            .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+            .offset { IntOffset(animatedOffsetX.roundToInt(), animatedOffsetY.roundToInt()) }
             .graphicsLayer(
                 rotationZ = animatedOffsetX / 20f,
-                alpha = 1f - (abs(animatedOffsetX) / 2000f).coerceIn(0f, 0.3f)
+                alpha = 1f - (kotlin.math.hypot(animatedOffsetX, animatedOffsetY) / 2000f).coerceIn(0f, 0.3f)
             )
             .glassmorphism(cornerRadius = 24.dp, tintAlpha = 0.02f),
         shape = RoundedCornerShape(24.dp)
@@ -603,9 +659,9 @@ fun SwipeableCard(
     mediaItem: MediaItem,
     swipeThreshold: Float,
     onBoundsChanged: (MediaTransitionBounds) -> Unit,
-    onSwiped: (direction: Float, startOffset: Float) -> Unit,
+    onSwiped: (action: SwipeAction, startOffset: Offset) -> Unit,
     onTap: () -> Unit,
-    onSwipeProgress: (Float) -> Unit,
+    onSwipeProgress: (horizontal: Float, vertical: Float) -> Unit,
     autoplayVideo: Boolean = mediaItem.isVideo,
     // False once the caller has already accepted a swipe for this card (e.g.
     // via the bottom buttons) -- closes the multi-touch race where a second
@@ -614,6 +670,7 @@ fun SwipeableCard(
     interactive: Boolean = true
 ) {
     var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
     var swipeHandled by remember(mediaItem.id) { mutableStateOf(false) }
 
@@ -625,16 +682,29 @@ fun SwipeableCard(
         ),
         label = "offsetX"
     )
+    val animatedOffsetY by animateFloatAsState(
+        targetValue = if (isDragging) offsetY else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "offsetY"
+    )
 
     val displayOffsetX = if (isDragging) offsetX else animatedOffsetX
+    val displayOffsetY = if (isDragging) offsetY else animatedOffsetY
     val rotation = displayOffsetX / 20f
     // Same -1f..1f drag progress reported to the parent via onSwipeProgress
     // (for the side lights / stack scale), computed locally too so the
     // KEEP/DELETE badges below can react to it directly without a round trip
     // through the caller.
     val progress = (displayOffsetX / swipeThreshold).coerceIn(-1f, 1f)
-    LaunchedEffect(displayOffsetX, swipeThreshold) {
-        onSwipeProgress(progress)
+    // Upward-only progress (0f..1f) for the FAVORITE badge -- downward drag
+    // reports 0f here since resolveSwipeAction never commits a downward
+    // release, matching the "springs back" behavior for that direction.
+    val verticalProgress = (-displayOffsetY / swipeThreshold).coerceIn(0f, 1f)
+    LaunchedEffect(displayOffsetX, displayOffsetY, swipeThreshold) {
+        onSwipeProgress(progress, verticalProgress)
     }
 
     Card(
@@ -655,12 +725,15 @@ fun SwipeableCard(
             .offset {
                 IntOffset(
                     (if (isDragging) offsetX else animatedOffsetX).roundToInt(),
-                    0 // Hardcode Y to 0 for strict X-axis swiping
+                    (if (isDragging) offsetY else animatedOffsetY).roundToInt()
                 )
             }
             .graphicsLayer(
                 rotationZ = rotation,
-                alpha = 1f - (abs(if (isDragging) offsetX else animatedOffsetX) / 2000f).coerceIn(0f, 0.3f)
+                alpha = 1f - (kotlin.math.hypot(
+                    if (isDragging) offsetX else animatedOffsetX,
+                    if (isDragging) offsetY else animatedOffsetY
+                ) / 2000f).coerceIn(0f, 0.3f)
             )
             .pointerInput(mediaItem.id, swipeHandled, interactive) {
                 detectTapGestures(
@@ -680,24 +753,26 @@ fun SwipeableCard(
                     },
                     onDragEnd = {
                         isDragging = false
-                        val swipedRight = offsetX > swipeThreshold
-                        val swipedLeft = offsetX < -swipeThreshold
-                        if ((swipedRight || swipedLeft) && !swipeHandled && interactive) {
+                        val action = resolveSwipeAction(offsetX, offsetY, swipeThreshold)
+                        if (action != null && !swipeHandled) {
                             swipeHandled = true
-                            onSwipeProgress(0f)
-                            onSwiped(if (swipedRight) 1f else -1f, offsetX)
+                            onSwipeProgress(0f, 0f)
+                            onSwiped(action, Offset(offsetX, offsetY))
                         } else {
                             offsetX = 0f
+                            offsetY = 0f
                         }
                     },
                     onDragCancel = {
                         isDragging = false
                         offsetX = 0f
+                        offsetY = 0f
                     }
                 ) { change, dragAmount ->
                     if (!swipeHandled && interactive) {
                         change.consume()
                         offsetX += dragAmount.x
+                        offsetY += dragAmount.y
                     }
                 }
             }
@@ -772,6 +847,29 @@ fun SwipeableCard(
                 ) {
                     Text(
                         text = "DELETE",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
+            // FAVORITE badge, driven independently by upward drag progress --
+            // it can appear alongside a KEEP/DELETE badge mid-drag (the two
+            // axes aren't mutually exclusive while dragging, only at release,
+            // via resolveSwipeAction's horizontal-wins-ties rule).
+            if (verticalProgress > 0f) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(24.dp)
+                        .graphicsLayer(alpha = verticalProgress),
+                    color = FavoriteGoldOverlay,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "FAVORITE",
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
