@@ -300,6 +300,21 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // would buy nothing.
     var favoriteInFlightIds by remember { mutableStateOf<List<Int>?>(null) }
 
+    // The FULL set of ids the current favorite run considered eligible (the
+    // whole single-target-state group from selectFavoriteBatch, before the
+    // MAX_FAVORITE_REQUEST_BATCH cap), paired with favoriteInFlightIds (which
+    // holds only the chunk actually sent). Exactly deletionRunIds' shape and
+    // purpose: on a cancel it tells "more of this same run is still queued, and
+    // the un-favorites this run deliberately left for its second pass" apart
+    // from "the user starred genuinely new rows while the dialog was open" —
+    // only the latter should re-open the prompt (see the launcher callback).
+    //
+    // Plain `remember` for the same reason as deletionRunIds: it can hold every
+    // pending id, and losing it across process death only costs precision — the
+    // `(runIds ?: ids)` fallback then compares against the sent chunk alone,
+    // which can cause one extra, harmless re-prompt, never a lost row.
+    var favoriteRunIds by remember { mutableStateOf<List<Int>?>(null) }
+
     // True once this composition has processed one ON_RESUME that wasn't the
     // synchronous replay LifecycleRegistry.addObserver fires the instant this
     // DisposableEffect's observer is added (it walks a newly-added observer
@@ -415,6 +430,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                     // itself — can never cancel a live dialog.
                     if (favoriteInFlightIds != null) {
                         favoriteInFlightIds = null
+                        favoriteRunIds = null
                     }
                     if (systemDialogInFlight) {
                         systemDialogInFlight = false
@@ -614,7 +630,9 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         val ids = favoriteInFlightIds
+        val runIds = favoriteRunIds
         favoriteInFlightIds = null
+        favoriteRunIds = null
         systemDialogInFlight = false
         if (ids != null) {
             if (result.resultCode == Activity.RESULT_OK) {
@@ -624,6 +642,27 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // not reach MediaStore. deferFavoriteSync keeps isFavorite as
                 // the user set it and only stops the re-prompt.
                 viewModel.deferFavoriteSync(ids)
+
+                // deferFavoriteSync suppresses the prompt for the rest of the
+                // session, which is right for the ids it was just given and
+                // wrong for a row the user starred WHILE this dialog was open
+                // — that row has never been offered, and without this it would
+                // wait for an unrelated toggleFavorite to reset the flag.
+                //
+                // Checked against runIds (this run's whole single-target-state
+                // group, before the MAX_FAVORITE_REQUEST_BATCH cap) rather than
+                // the sent chunk, exactly as the deletion callback does: the
+                // un-sent remainder of a run the user just cancelled is still
+                // "asked about", and treating it as unshown would re-open the
+                // dialog on every cancel of a capped batch — and loop forever
+                // if a persistently-failing clearPendingFavoriteSync kept
+                // re-selecting the same chunk. Only a row outside runIds was
+                // genuinely starred after this run began.
+                val runIdSet = (runIds ?: ids).toSet()
+                val hasUnshownItems = pendingFavoriteSync.any { it.id !in runIdSet }
+                if (hasUnshownItems) {
+                    viewModel.rearmFavoritePrompt()
+                }
             }
         }
     }
@@ -652,10 +691,10 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         // both prompts become eligible in the same frame.
         if (deletionInFlightIds != null || deletionPromptArmed) return@LaunchedEffect
         if (pendingFavoriteSync.isEmpty() || favoritePromptedThisSession) return@LaunchedEffect
-        // Same reason as the deletion effect: a launch from the background can
-        // be silently dropped, which would leave favoriteInFlightIds and the
-        // gate stuck. resumeTick re-fires this effect on every foreground
-        // return.
+        // Cheap pre-filter bail-out: don't spend up to
+        // MAX_FAVORITE_REQUEST_BATCH ContentResolver round-trips below when we
+        // can already tell this run cannot launch. NOT the check that makes the
+        // launch safe — that one is after the suspension, below.
         if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
             return@LaunchedEffect
         }
@@ -665,7 +704,8 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         // prefix of an already-homogeneous batch keeps it homogeneous; the
         // remainder keeps its pendingFavoriteSync flag and comes back on the
         // next pass, when this request's result has cleared the gate.
-        val batch = selectFavoriteBatch(pendingFavoriteSync).take(MAX_FAVORITE_REQUEST_BATCH)
+        val eligible = selectFavoriteBatch(pendingFavoriteSync)
+        val batch = eligible.take(MAX_FAVORITE_REQUEST_BATCH)
         if (batch.isEmpty()) return@LaunchedEffect
         val targetState = batch.first().isFavorite
 
@@ -688,17 +728,32 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         val sendable = itemUris.filter { it.second in existingUris }
         if (sendable.isEmpty()) return@LaunchedEffect
 
+        // Re-check RESUMED after the suspension, in the same position and for
+        // the same reason as the deletion effect: filterExistingUris above does
+        // one blocking ContentResolver.query per URI, sequentially, for up to
+        // MAX_FAVORITE_REQUEST_BATCH URIs, so the app can easily be backgrounded
+        // during it. Launching into a stopped Activity risks a silently-dropped
+        // IntentSender, which here would also strand the shared gate until the
+        // next genuine ON_RESUME. The pre-filter check above does NOT cover
+        // this window. resumeTick re-fires the whole effect on foreground
+        // return, so this batch is simply retried.
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+
         // Re-check the gate after the suspension above and immediately before
         // claiming it — see the identical check in the deletion effect for why
         // the top-of-effect check alone is not enough.
         if (systemDialogInFlight || favoriteInFlightIds != null) return@LaunchedEffect
 
         val ids = sendable.map { it.first.id }
+        val runIds = eligible.map { it.id }
         try {
             val intent = MediaFavoriteHandler.getFavoriteIntent(
                 context, sendable.map { it.second }, targetState
             )
             favoriteInFlightIds = ids
+            favoriteRunIds = runIds
             systemDialogInFlight = true
             favoriteResultLauncher.launch(
                 IntentSenderRequest.Builder(intent.intentSender).build()
@@ -710,6 +765,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             // the gate, then surface it as a recoverable error.
             Log.e(TAG, "Failed to build/launch the system favorite request", e)
             favoriteInFlightIds = null
+            favoriteRunIds = null
             systemDialogInFlight = false
             viewModel.deferFavoriteSync(ids)
             viewModel.reportError("Couldn't open the favorite confirmation.")

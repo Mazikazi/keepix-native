@@ -693,4 +693,20 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    /**
+     * Re-arms the favorite confirmation prompt without touching any rows. The
+     * exact mirror of [rearmPrompt], for the same reason: [deferFavoriteSync]
+     * unconditionally suppresses the prompt for its OWN ids, which would
+     * otherwise also suppress a row starred *while that dialog was open* — a
+     * row the user has never been asked about — until some unrelated
+     * [toggleFavorite] or [favoriteMedia] happened to reset the flag.
+     *
+     * The Activity only calls this for rows outside the cancelled run's id set,
+     * so a cancelled batch (including its un-shown chunks) stays suppressed and
+     * cannot re-prompt in a loop.
+     */
+    fun rearmFavoritePrompt() {
+        _favoritePromptedThisSession.value = false
+    }
 }
