@@ -39,6 +39,7 @@ import com.sese.keepix.ui.theme.KeepixTheme
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.utils.MediaDeletionHandler
+import com.sese.keepix.utils.MediaUriFilter
 
 private const val TAG = "MainActivity"
 
@@ -423,7 +424,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         // silently dropped here as "missing" -- exactly the row-drop-without-
         // confirmed-file-deletion this mark-then-confirm design exists to
         // prevent. See filterExistingUris's doc for the full reasoning.
-        val filterResult = MediaDeletionHandler.filterExistingUris(
+        val filterResult = MediaUriFilter.filterExistingUris(
             context,
             itemUris.map { it.second },
             hasOnlyPartialMediaAccess = hasOnlyPartialMediaAccess(context)
