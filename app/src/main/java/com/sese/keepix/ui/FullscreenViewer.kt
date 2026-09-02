@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -152,6 +153,18 @@ fun FullscreenViewer(
     onDismiss: () -> Unit,
     tutorialComplete: Boolean = true,
     onTutorialDismiss: () -> Unit = {},
+    /**
+     * Star toggle for the action bar. Null hides the button entirely --
+     * MainActivity passes null in BIN mode, where a binned item isn't kept
+     * and so has no star to toggle. Same Boolean-return contract as
+     * [onKeepOrRestore]/[onDeleteOrDeleteNow] (false = target row gone, shown
+     * via the same in-viewer notice) but callers are NOT expected to pop the
+     * back stack on a hit here unless the toggle itself removes the row from
+     * its list (as favoriting an un-kept swipe-queue item does).
+     */
+    onToggleFavorite: ((Uri) -> Boolean)? = null,
+    /** Current favorite state of the item at this Uri; drives the star's tint. */
+    isFavorite: (Uri) -> Boolean = { false },
     // Gallery mode params
     galleryItems: List<GalleryItem> = emptyList(),
     initialIndex: Int = 0
@@ -449,6 +462,7 @@ fun FullscreenViewer(
 
                 ViewerActionBar(
                     mode = mode,
+                    targetUri = currentItem.uri,
                     onPrimary = {
                         interactionTick++
                         if (!onKeepOrRestore(currentItem.uri)) {
@@ -460,7 +474,20 @@ fun FullscreenViewer(
                         if (!onDeleteOrDeleteNow(currentItem.uri)) {
                             actionNotice = ITEM_GONE_NOTICE
                         }
-                    }
+                    },
+                    // Wrapped here (not passed straight through) so a miss
+                    // surfaces the same in-viewer notice as the other two
+                    // actions -- MainActivity's implementation only reports
+                    // hit/miss, it doesn't know about `actionNotice`.
+                    onToggleFavorite = onToggleFavorite?.let { toggle ->
+                        { uri: Uri ->
+                            interactionTick++
+                            val hit = toggle(uri)
+                            if (!hit) actionNotice = ITEM_GONE_NOTICE
+                            hit
+                        }
+                    },
+                    isFavorite = isFavorite
                 )
             }
         }
@@ -548,8 +575,13 @@ private tailrec fun Context.findHostActivity(): Activity? = when (this) {
 @Composable
 private fun ViewerActionBar(
     mode: ViewerMode,
+    /** The item the star (and the primary/secondary actions) target. */
+    targetUri: Uri,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
+    /** Null hides the star entirely -- MainActivity omits it in BIN mode. */
+    onToggleFavorite: ((Uri) -> Boolean)? = null,
+    isFavorite: (Uri) -> Boolean = { false },
     modifier: Modifier = Modifier
 ) {
     val primaryIcon: ImageVector = when (mode) {
@@ -580,6 +612,19 @@ private fun ViewerActionBar(
                 tint = KeepGreenOverlay,
                 onClick = onPrimary
             )
+            if (onToggleFavorite != null) {
+                val favorited = isFavorite(targetUri)
+                ViewerAction(
+                    icon = Icons.Default.Star,
+                    label = "FAVORITE",
+                    // Gold when starred, a dim glass tint otherwise -- unlike
+                    // KEEP/DELETE this button is a toggle, so its background
+                    // (not just its icon) has to carry the current state.
+                    tint = if (favorited) FavoriteGoldOverlay else Color.White.copy(alpha = 0.12f),
+                    contentDescription = if (favorited) "Remove from favorites" else "Add to favorites",
+                    onClick = { onToggleFavorite(targetUri) }
+                )
+            }
         }
     }
 }
@@ -589,7 +634,9 @@ private fun ViewerAction(
     icon: ImageVector,
     label: String,
     tint: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    /** Defaults to [label] -- only the favorite toggle needs these to differ. */
+    contentDescription: String = label
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         IconButton(
@@ -598,7 +645,7 @@ private fun ViewerAction(
                 .size(56.dp)
                 .background(tint, CircleShape)
         ) {
-            Icon(imageVector = icon, contentDescription = label, tint = Color.White)
+            Icon(imageVector = icon, contentDescription = contentDescription, tint = Color.White)
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(

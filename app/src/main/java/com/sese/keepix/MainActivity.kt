@@ -1039,6 +1039,46 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                     if (hit != null) navController.popBackStack()
                     hit != null
                 },
+                // Star toggle. Not wired for BIN -- a binned item isn't kept,
+                // so it has no favorite state to flip.
+                //
+                // Unlike onKeepOrRestore/onDeleteOrDeleteNow above, a KEPT-mode
+                // hit does NOT pop the back stack: toggleFavorite only flips
+                // KeptItemEntity.isFavorite in place, the row never leaves
+                // `keptItems`, and the whole point of the button is that the
+                // star updates while the viewer stays open. SWIPE is the
+                // opposite -- favoriteMedia() keeps-and-stars the item in one
+                // insert (same as the swipe-up gesture on the swipe screen
+                // itself), which removes it from `mediaItems` exactly like
+                // keepMedia() does, so it pops for the same reason
+                // onKeepOrRestore's SWIPE branch does: leaving the viewer open
+                // would strand `currentItem` pointing at whatever now shifted
+                // into that slot.
+                onToggleFavorite = when (mode) {
+                    ViewerMode.BIN -> null
+                    ViewerMode.SWIPE -> { uri ->
+                        val hit = mediaItems.find { it.uri == uri }
+                            ?.also { viewModel.favoriteMedia(it) }
+                        if (hit != null) navController.popBackStack()
+                        hit != null
+                    }
+                    ViewerMode.KEPT -> { uri ->
+                        val key = uri.toString()
+                        keptItems.find { it.mediaUri == key }
+                            ?.also { viewModel.toggleFavorite(it) } != null
+                    }
+                },
+                isFavorite = { uri ->
+                    // Only KEPT items carry a meaningful favorite flag: a
+                    // swipe-queue item is by definition not yet kept, and BIN
+                    // never shows the star at all (onToggleFavorite is null
+                    // there, so ViewerActionBar never calls this either).
+                    if (mode == ViewerMode.KEPT) {
+                        keptItems.find { it.mediaUri == uri.toString() }?.isFavorite == true
+                    } else {
+                        false
+                    }
+                },
                 onDismiss = { navController.popBackStack() },
                 galleryItems = galleryItems,
                 initialIndex = initialIndex
