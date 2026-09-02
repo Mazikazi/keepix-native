@@ -332,10 +332,10 @@ git commit -m "refactor: extract MediaUriFilter, add MediaFavoriteHandler"
 
 Create `app/src/test/java/com/sese/keepix/ui/FavoriteStateMachineTest.kt`. Read the existing `DeletionStateMachineTest.kt` and `ViewModelTestHarness.kt` **first** and mirror them — the harness uses `Unsafe.allocateInstance` plus reflection to run real ViewModel bytecode without Robolectric, and injects MockK-mocked DAOs verified with `coVerify`.
 
-> The snippets below show the *assertions* that matter. The harness construction
-> call is illustrative — use whatever `ViewModelTestHarness` actually exposes, and
-> note it may need a `keptItemDao` injection point added if it currently only wires
-> `binItemDao`. Match the real API; do not invent one.
+> **Verified:** the harness is at `app/src/test/java/com/sese/keepix/testutil/ViewModelTestHarness.kt`
+> (package `com.sese.keepix.testutil`, *not* `...ui`) and already exposes
+> `newViewModel(application, binItemDao = mockk(relaxed = true), keptItemDao = mockk(relaxed = true), …)`,
+> so `keptItemDao` needs no new injection point. Import it from `testutil`.
 
 ```kotlin
     @Test
@@ -923,9 +923,17 @@ Add `FilterChip`s for **All** and **★ Favorites** above the grid, with the sel
 
 Show a `FavoriteGold` star on tiles where `isFavorite` is true, and add an `onToggleFavorite` parameter wired to `viewModel.toggleFavorite`. Keep the existing `combinedClickable` long-press → unkeep confirmation intact.
 
-- [ ] **Step 3: Handle the list changing underneath the filter**
+- [ ] **Step 3: Verify the grid survives the list changing underneath the filter**
 
-`keptItems` is a live Room flow. Key the grid by stable Room id (`items(items, key = { it.id })`) as `RecycleBinScreen.kt:201` does, so a row vanishing while the Favorites filter is active cannot strand state or crash the grid.
+**Already done — verify, don't re-add.** `KeptItemsScreen.kt:105` already reads
+`items(items, key = { it.id })`, added by an earlier fix wave. Confirm it is still
+there after your filter change, since a row vanishing while the Favorites filter is
+active must not strand state or crash the grid.
+
+Watch for the duplicate-key hazard this introduces: a `LazyLayout` key that repeats
+is a runtime crash, and `kept_items` has no unique index on `mediaId`/`mediaUri` —
+uniqueness rests on the in-memory `keptMediaIds` exclusion set. Filtering must not
+be able to produce the same Room id twice.
 
 - [ ] **Step 4: Verify**
 
