@@ -414,7 +414,20 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         // Parse each mediaUri once and carry the pair through both buckets,
         // instead of re-parsing per lookup.
         val itemUris = pendingDeletionUris.map { it to Uri.parse(it.mediaUri) }
-        val filterResult = MediaDeletionHandler.filterExistingUris(context, itemUris.map { it.second })
+        // Under a READ_MEDIA_VISUAL_USER_SELECTED-only grant, MediaProvider
+        // enforces the grant by row-level filtering: a query for a URI outside
+        // the current selection returns an empty cursor, indistinguishable
+        // from "genuinely deleted". Without this flag, a user who re-opens
+        // the system photo picker and deselects an already-binned item (a
+        // first-class Android flow, not a deletion) would have its Room row
+        // silently dropped here as "missing" -- exactly the row-drop-without-
+        // confirmed-file-deletion this mark-then-confirm design exists to
+        // prevent. See filterExistingUris's doc for the full reasoning.
+        val filterResult = MediaDeletionHandler.filterExistingUris(
+            context,
+            itemUris.map { it.second },
+            hasOnlyPartialMediaAccess = hasOnlyPartialMediaAccess(context)
+        )
 
         val missingUris = filterResult.missing.toSet()
         val missingIds = itemUris.filter { it.second in missingUris }.map { it.first.id }
@@ -480,6 +493,20 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val isLoading by viewModel.isLoading.collectAsState()
     val reachedEnd by viewModel.reachedEnd.collectAsState()
     val hasLoadedOnce by viewModel.hasLoadedOnce.collectAsState()
+
+    // True only on API 34+ when the user's only media access is the
+    // "Select photos…" partial grant. Keyed on resumeTick, NOT hasPermission:
+    // hasPermission is already true both before and after a partial-to-full
+    // upgrade (checkMediaPermission treats both as "has access"), so keying
+    // on it would never re-trigger this and the notice would go stale for a
+    // user who leaves for system Settings, grants full access, and returns.
+    // resumeTick bumps on every genuine foreground return (see its own
+    // declaration above), which is exactly when that upgrade could have
+    // happened. Hoisted here, once, rather than recomputed separately in the
+    // "swipe" and "settings" destinations below that both surface it.
+    val hasOnlyPartialAccess = remember(resumeTick) {
+        hasOnlyPartialMediaAccess(context)
+    }
 
     // Task 5: whether a fullscreen viewer is currently the top destination --
     // used only to pause SwipeScreen's autoplaying top-card video while it's
@@ -560,7 +587,8 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 reachedEnd = reachedEnd,
                 hasLoadedOnce = hasLoadedOnce,
                 onRetry = { viewModel.loadMedia() },
-                isFullscreenOpen = isFullscreenOpen
+                isFullscreenOpen = isFullscreenOpen,
+                hasOnlyPartialMediaAccess = hasOnlyPartialAccess
             )
         }
 
@@ -594,13 +622,6 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
 
         composable("settings") {
-            // Recomputed off hasPermission (checkMediaPermission's own key)
-            // rather than cached once: a user who leaves for Settings to
-            // upgrade from a partial to a full grant and comes back should
-            // see this notice go away without restarting the app.
-            val hasOnlyPartialAccess = remember(hasPermission) {
-                hasOnlyPartialMediaAccess(context)
-            }
             SettingsScreen(
                 currentRetentionDays = viewModel.prefs.retentionDays,
                 binCount = binCount,
@@ -636,6 +657,19 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             // also means an expiry firing while the viewer is open simply
             // shortens the gallery instead of stranding dead pages.
             val galleryItems = remember(mode, mediaItems, binItems, keptItems) {
+                // distinctBy(uri): the pager now keys each page by item.uri
+                // (see GalleryPager), and a LazyLayout throws at runtime on a
+                // duplicate key -- a hard crash, unlike the old index-keyed
+                // pager where a duplicate URI was merely two identical-
+                // looking pages. Neither bin_items nor kept_items has a
+                // unique index on mediaUri/mediaId; uniqueness today rests
+                // entirely on the in-memory binMediaIds/keptMediaIds
+                // exclusion sets in KeepixViewModel, which is correct in
+                // every path traced but not enforced by the schema. This is
+                // free insurance against a future or storage-layer duplicate
+                // slipping through -- it also just does the right thing for
+                // display, since two rows for the same URI would otherwise
+                // show as two entries anyway.
                 when (mode) {
                     ViewerMode.SWIPE -> mediaItems.map { GalleryItem(it.uri, it.isVideo) }
                     ViewerMode.BIN -> binItems.map {
@@ -644,7 +678,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                     ViewerMode.KEPT -> keptItems.map {
                         GalleryItem(Uri.parse(it.mediaUri), it.mediaType == "VIDEO")
                     }
-                }
+                }.distinctBy { it.uri }
             }
             val initialIndex = remember(galleryItems, mediaUri) {
                 galleryItems.indexOfFirst { it.uri == mediaUri }.coerceAtLeast(0)

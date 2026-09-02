@@ -98,7 +98,13 @@ fun SwipeScreen(
     // True while a fullscreen viewer is open above this screen. Used only to
     // pause the top card's autoplaying video -- otherwise it keeps playing
     // (silently) underneath the fullscreen one.
-    isFullscreenOpen: Boolean = false
+    isFullscreenOpen: Boolean = false,
+    // True only on API 34+ when the user granted READ_MEDIA_VISUAL_USER_SELECTED
+    // ("Select photos…") without the full pair. Shown only in the reachedEnd
+    // empty state below: that's where the confusion this notice heads off
+    // actually surfaces -- a small selection produces "All Done!" after just
+    // a handful of swipes with no explanation otherwise.
+    hasOnlyPartialMediaAccess: Boolean = false
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val swipeThreshold = with(LocalDensity.current) { (screenWidth * 0.4f).toPx() }
@@ -398,6 +404,24 @@ fun SwipeScreen(
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(32.dp))
+
+                if (hasOnlyPartialMediaAccess) {
+                    Surface(
+                        color = BadgeOrange.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "You've given Keepix access to a limited " +
+                                "selection of photos. To see your full library, " +
+                                "allow full access in system Settings.",
+                            color = BadgeOrange,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 if (binCount > 0) {
                     com.sese.keepix.ui.components.GlassButton(
