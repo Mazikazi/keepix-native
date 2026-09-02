@@ -754,7 +754,7 @@ fun SwipeableCard(
                     onDragEnd = {
                         isDragging = false
                         val action = resolveSwipeAction(offsetX, offsetY, swipeThreshold)
-                        if (action != null && !swipeHandled) {
+                        if (action != null && !swipeHandled && interactive) {
                             swipeHandled = true
                             onSwipeProgress(0f, 0f)
                             onSwiped(action, Offset(offsetX, offsetY))
