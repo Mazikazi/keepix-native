@@ -219,22 +219,35 @@ private fun KeptGridItem(
         // filled gold when starred, dim otherwise. Its own clickable (not
         // part of the tile's combinedClickable) so it toggles the star
         // instead of tapping through to onItemTap/onLongClick.
+        //
+        // Hit area is 48dp (Material's minimum touch target) even though the
+        // visible chip stays 24dp -- the outer Box supplies the larger,
+        // invisible tap target and centers the smaller visual chip inside it,
+        // so the badge doesn't look bigger but is no longer fiddly to hit in
+        // a dense 3-column grid. The outer clickable only consumes gestures
+        // within its own (still tile-sized-or-smaller) bounds, so the tile's
+        // combinedClickable underneath is unaffected outside that corner.
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(4.dp)
-                .size(24.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0x66000000))
+                .size(48.dp)
                 .clickable(onClick = onToggleFavorite),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "★",
-                color = if (item.isFavorite) FavoriteGold else TextMuted,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0x66000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "★",
+                    color = if (item.isFavorite) FavoriteGold else TextMuted,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         // Kept badge
