@@ -10,6 +10,7 @@ import com.sese.keepix.ui.KeepixViewModel
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.lang.reflect.Field
 
 /**
@@ -124,6 +125,15 @@ object ViewModelTestHarness {
         setField(vm, "_deletedCount", MutableStateFlow(0))
         setField(vm, "_sessionKeptCount", MutableStateFlow(0))
         setField(vm, "_promptedThisSession", MutableStateFlow(false))
+        // favoritePromptedThisSession (the public asStateFlow() view) is a
+        // *separate* backing field from _favoritePromptedThisSession -- its own
+        // property initializer never ran either, for the same allocateInstance
+        // reason documented above -- so a test reading vm.favoritePromptedThisSession
+        // directly (rather than reflecting on the private field, as the existing
+        // deletion tests do) needs it wired to the SAME flow instance here.
+        val favoritePrompted = MutableStateFlow(false)
+        setField(vm, "_favoritePromptedThisSession", favoritePrompted)
+        setField(vm, "favoritePromptedThisSession", favoritePrompted.asStateFlow())
         setField(vm, "_reachedEnd", MutableStateFlow(false))
         setField(vm, "_hasLoadedOnce", MutableStateFlow(false))
         setField(vm, "binMediaIds", emptySet<Long>())

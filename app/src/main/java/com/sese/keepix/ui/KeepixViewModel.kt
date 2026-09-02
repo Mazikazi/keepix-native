@@ -599,4 +599,98 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             spliceIntoQueue(item.toMediaItem())
         }
     }
+
+    // Favorite state
+
+    val favoriteItems: StateFlow<List<KeptItemEntity>> = keptItemDao.getFavoriteItems()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pendingFavoriteSync: StateFlow<List<KeptItemEntity>> =
+        keptItemDao.getPendingFavoriteSync()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _favoritePromptedThisSession = MutableStateFlow(false)
+
+    /**
+     * Mirrors [promptedThisSession] for the favorite dialog. A LaunchedEffect
+     * observing [pendingFavoriteSync] needs this in its key list to notice a
+     * re-arm when the pending set's *content* has not changed.
+     */
+    val favoritePromptedThisSession: StateFlow<Boolean> =
+        _favoritePromptedThisSession.asStateFlow()
+
+    /**
+     * Swipe-up / ★ button. Keeps the item AND stars it, in one insert: favorite is
+     * a starred subset of kept, never a separate destination.
+     */
+    fun favoriteMedia(mediaItem: MediaItem) {
+        viewModelScope.launch {
+            keptItemDao.insert(
+                KeptItemEntity(
+                    mediaId = mediaItem.id,
+                    mediaUri = mediaItem.uri.toString(),
+                    displayName = mediaItem.displayName,
+                    mediaType = if (mediaItem.isVideo) "VIDEO" else "IMAGE",
+                    dateTaken = mediaItem.dateAdded * 1000,
+                    keptAt = System.currentTimeMillis(),
+                    width = mediaItem.width,
+                    height = mediaItem.height,
+                    durationMs = mediaItem.durationMs,
+                    isFavorite = true,
+                    pendingFavoriteSync = true
+                )
+            )
+            keptMediaIds = keptMediaIds + mediaItem.id
+            _sessionKeptCount.value++
+            removeSwipedItem(mediaItem)
+        }
+    }
+
+    /** Star toggle from the Kept grid or the fullscreen viewer. */
+    fun toggleFavorite(item: KeptItemEntity) {
+        viewModelScope.launch {
+            try {
+                keptItemDao.setFavorite(listOf(item.id), !item.isFavorite)
+                _favoritePromptedThisSession.value = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle favorite", e)
+                _error.value = "Couldn't update that favorite."
+            }
+        }
+    }
+
+    /**
+     * The system dialog confirmed the MediaStore write for [ids]. Clear the sync
+     * flag; [KeptItemEntity.isFavorite] already holds the intended value.
+     */
+    fun confirmFavoriteSync(ids: List<Int>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                keptItemDao.clearPendingFavoriteSync(ids)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to clear favorite sync flag", e)
+                _error.value = "Some favorites could not be saved."
+            }
+        }
+    }
+
+    /**
+     * The user cancelled the favorite dialog. Unlike [deferDeletion] this does NOT
+     * revert the user's intent: nothing was destroyed, the star simply did not
+     * reach MediaStore. Clearing the sync flag stops it re-prompting on every
+     * future launch; the star stays set in-app.
+     */
+    fun deferFavoriteSync(ids: List<Int>) {
+        _favoritePromptedThisSession.value = true
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                keptItemDao.clearPendingFavoriteSync(ids)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to clear deferred favorite sync flag", e)
+                _error.value = "Some favorites could not be saved."
+            }
+        }
+    }
 }
