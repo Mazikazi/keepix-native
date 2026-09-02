@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -97,5 +98,31 @@ class FavoriteStateMachineTest {
         // the star stays set in-app, the sync flag is simply cleared.
         coVerify(exactly = 1) { keptItemDao.clearPendingFavoriteSync(listOf(3)) }
         coVerify(exactly = 0) { keptItemDao.setFavorite(any(), any()) }
+    }
+
+    @Test
+    fun `favoriting a new item re-arms the prompt after an earlier cancel latched it`() = runTest {
+        // Cross-task regression pin: swipe up item A, dialog shown, user
+        // cancels -- deferFavoriteSync latches favoritePromptedThisSession.
+        // Ten minutes later in the same process, the user swipes up item B.
+        // favoriteMedia(B) must re-arm the prompt (mirroring deleteBinItems'
+        // re-arm on a fresh delete request), or MainActivity's
+        // pendingFavoriteSync/favoritePromptedThisSession guard stays tripped
+        // forever and B's star silently never reaches MediaStore for the rest
+        // of the process.
+        val vm = ViewModelTestHarness.newViewModel(keptItemDao = keptItemDao)
+
+        vm.deferFavoriteSync(listOf(3))
+        advanceUntilIdle()
+        assertTrue(vm.favoritePromptedThisSession.value)
+
+        vm.favoriteMedia(mediaItem(id = 8L))
+        advanceUntilIdle()
+
+        assertFalse(
+            "favoriteMedia must clear favoritePromptedThisSession so a later item can prompt again",
+            vm.favoritePromptedThisSession.value
+        )
+        coVerify { keptItemDao.insert(match { it.isFavorite && it.pendingFavoriteSync }) }
     }
 }

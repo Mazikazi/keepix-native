@@ -640,6 +640,16 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                     pendingFavoriteSync = true
                 )
             )
+            // An explicit new favorite re-arms the prompt even after an earlier
+            // cancel latched it — otherwise a cancel on item A would silently
+            // suppress the dialog for every item favorited afterward for the
+            // rest of the process (see deleteBinItems for the same reasoning).
+            // Must happen AFTER the insert above completes, for the same
+            // LaunchedEffect-ordering reason documented there: an effect keyed
+            // on both pendingFavoriteSync and favoritePromptedThisSession could
+            // otherwise observe the flag flip to false while pendingFavoriteSync
+            // still reflects the pre-write set.
+            _favoritePromptedThisSession.value = false
             keptMediaIds = keptMediaIds + mediaItem.id
             _sessionKeptCount.value++
             removeSwipedItem(mediaItem)
