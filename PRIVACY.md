@@ -45,10 +45,12 @@ Keepix uses a local Room (SQLite) database and a SharedPreferences file. Tables:
 | Table | Columns | Purpose |
 |---|---|---|
 | `bin_items` | `mediaId`, `mediaUri`, `displayName`, `mediaType`, `dateTaken`, `deletedAt`, `expiryAt`, `sessionId`, `retentionMode`, `width`, `height`, `durationMs` | Recycle Bin items pending permanent deletion |
-| `kept_items` | `mediaId`, `mediaUri`, `displayName`, `mediaType`, `dateTaken`, `keptAt`, `width`, `height`, `durationMs` | Items you chose to keep (prevents re-showing) |
+| `kept_items` | `mediaId`, `mediaUri`, `displayName`, `mediaType`, `dateTaken`, `keptAt`, `width`, `height`, `durationMs`, `isFavorite`, `pendingFavoriteSync` | Items you chose to keep (prevents re-showing) |
 | SharedPreferences | `retentionDays`, `batchSize`, `onboardingComplete`, `lastSessionId`, `fullscreenTutorialComplete` | User settings |
 
 **No media bytes are stored.** Only URIs and metadata.
+
+When you favorite an item, Keepix asks Android to set that photo or video's system favorite flag, so the star also appears in your gallery app. Android shows you a confirmation dialog first, and nothing is written unless you confirm. This changes only that flag — no file contents are read, copied or modified.
 
 ---
 

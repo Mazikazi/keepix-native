@@ -39,6 +39,7 @@ import com.sese.keepix.ui.theme.KeepixTheme
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.utils.MediaDeletionHandler
+import com.sese.keepix.utils.MediaFavoriteHandler
 import com.sese.keepix.utils.MediaUriFilter
 
 private const val TAG = "MainActivity"
@@ -62,6 +63,36 @@ private const val TAG = "MainActivity"
  */
 private const val MAX_DELETE_REQUEST_BATCH = 750
 
+/**
+ * The same cap, for the same reason, on `MediaStore.createFavoriteRequest`:
+ * it is the same kind of synchronous Binder transaction into MediaProvider as
+ * `createDeleteRequest`, so an unbounded batch carries the same
+ * `TransactionTooLargeException` risk. See [MAX_DELETE_REQUEST_BATCH] for the
+ * size derivation. Any remainder keeps its `pendingFavoriteSync` flag and is
+ * picked up on the next pass once this request resolves (see the favorite
+ * `LaunchedEffect` below).
+ */
+private const val MAX_FAVORITE_REQUEST_BATCH = 750
+
+/**
+ * Picks the single-target-state batch to send next.
+ *
+ * [android.provider.MediaStore.createFavoriteRequest] takes ONE boolean for the
+ * whole batch, so a pending set containing both stars and un-stars cannot go in
+ * one request. Favorites go first; the un-favorites are picked up on the next
+ * pass once this request resolves and clears the shared dialog gate. Returning a
+ * mixed batch would silently apply one target state to both groups.
+ *
+ * Pure and top-level rather than inlined into the favorite `LaunchedEffect`
+ * below, so this rule is directly testable (`FavoriteBatchTest`) without a
+ * device or a composition. The caller is responsible for the size cap
+ * ([MAX_FAVORITE_REQUEST_BATCH]) — taking a prefix of an already-homogeneous
+ * batch cannot reintroduce a mixed target state.
+ */
+fun selectFavoriteBatch(pending: List<KeptItemEntity>): List<KeptItemEntity> {
+    val toFavorite = pending.filter { it.isFavorite }
+    return if (toFavorite.isNotEmpty()) toFavorite else pending.filter { !it.isFavorite }
+}
 
 /**
  * The media permission(s) this app requests, version-gated.
@@ -235,6 +266,40 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         mutableStateOf<List<Long>?>(null)
     }
 
+    // Both system dialogs (delete and favorite) go through this one gate.
+    // Launching two IntentSenders in the same frame makes Android show one and
+    // silently drop the other, leaving the loser's rows pending forever behind
+    // its own latched guard. Deletion takes priority; the favorite prompt waits
+    // for the next recomposition after the gate clears.
+    //
+    // Both effects re-read this immediately before claiming it, not only at
+    // their top: each effect suspends in filterExistingUris after its top-of-
+    // effect checks, and the other effect's body runs during that suspension,
+    // so the top checks alone would let BOTH pass and both launch. The
+    // check-and-claim pair below has no suspension point between the two
+    // statements and both run on the composition's main-thread dispatcher, so
+    // exactly one effect can win.
+    //
+    // Deliberately plain `remember`, not rememberSaveable: after an Activity
+    // recreation the still-showing system dialog is a separate activity on top
+    // of this one, so neither effect is RESUMED and neither can launch until
+    // its result callback has run (which clears this anyway). A saved `true`
+    // would only add a latched-forever failure mode.
+    var systemDialogInFlight by remember { mutableStateOf(false) }
+
+    // Ids of the kept rows awaiting a result from the system favorite dialog.
+    // Mirrors deletionInFlightIds; declared up here (rather than beside the
+    // favorite effect below) so the ON_RESUME stuck-guard can clear it too.
+    //
+    // Plain `remember`, unlike deletionInFlightIds: losing this across an
+    // Activity recreation while the favorite dialog is showing costs one
+    // redundant prompt (the rows keep their pendingFavoriteSync flag and are
+    // offered again), never a lost row or a stuck guard — where losing
+    // deletionInFlightIds would swallow a RESULT_OK and strand rows marked
+    // pendingDeletion. Nothing here is destructive, so the saveable machinery
+    // would buy nothing.
+    var favoriteInFlightIds by remember { mutableStateOf<List<Int>?>(null) }
+
     // True once this composition has processed one ON_RESUME that wasn't the
     // synchronous replay LifecycleRegistry.addObserver fires the instant this
     // DisposableEffect's observer is added (it walks a newly-added observer
@@ -338,6 +403,22 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                         deletionInFlightIds = null
                         deletionRunIds = null
                     }
+                    // Same recovery for the favorite request, and for the gate
+                    // both requests share. The gate is the more dangerous of
+                    // the two to leave latched: deletionInFlightIds only
+                    // suppresses the delete prompt, but a stuck
+                    // systemDialogInFlight would suppress BOTH prompts for the
+                    // rest of the process. It is only ever set together with
+                    // one of the two id sets, so clearing it here — on a
+                    // genuine ON_RESUME, i.e. once any dialog that really did
+                    // appear has already delivered its result and cleared this
+                    // itself — can never cancel a live dialog.
+                    if (favoriteInFlightIds != null) {
+                        favoriteInFlightIds = null
+                    }
+                    if (systemDialogInFlight) {
+                        systemDialogInFlight = false
+                    }
                 }
                 hasResumedOnce = true
             }
@@ -362,6 +443,11 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         val runIds = deletionRunIds
         deletionInFlightIds = null
         deletionRunIds = null
+        // Releases the shared gate for the favorite prompt (and for the next
+        // delete chunk). Cleared unconditionally, exactly like the ids above:
+        // this callback runs for every outcome of a dialog this effect
+        // launched, so it owns the gate in every case.
+        systemDialogInFlight = false
         if (ids != null) {
             if (result.resultCode == Activity.RESULT_OK) {
                 viewModel.confirmDeletion(ids)
@@ -407,9 +493,17 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     //    needing an unrelated state change first.
     //  - resumeTick: re-evaluates on every foreground return, so a request
     //    skipped while backgrounded (below) gets retried.
-    LaunchedEffect(pendingDeletionUris, promptedThisSession, hasPermission, resumeTick) {
+    //  - systemDialogInFlight: the gate shared with the favorite prompt below.
+    //    Needed as a key, not just as a guard, so this effect gets a fresh run
+    //    the moment a favorite dialog it lost the race to resolves — otherwise
+    //    a deletion blocked by the gate would wait for an unrelated state
+    //    change.
+    LaunchedEffect(
+        pendingDeletionUris, promptedThisSession, hasPermission, resumeTick,
+        systemDialogInFlight
+    ) {
         if (!hasPermission) return@LaunchedEffect
-        if (deletionInFlightIds != null) return@LaunchedEffect
+        if (systemDialogInFlight || deletionInFlightIds != null) return@LaunchedEffect
         if (pendingDeletionUris.isEmpty() || promptedThisSession) return@LaunchedEffect
 
         // Parse each mediaUri once and carry the pair through both buckets,
@@ -454,6 +548,19 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             return@LaunchedEffect
         }
 
+        // Re-check the shared gate here as well as at the top of the effect.
+        // filterExistingUris above is a suspension point, and the favorite
+        // effect's body runs during it: with only the top-of-effect check,
+        // both effects could pass while the other was suspended and both would
+        // launch, which is the exact double-IntentSender case the gate exists
+        // to prevent. This check and the `systemDialogInFlight = true` below
+        // are one uninterrupted main-thread run, so the claim is atomic.
+        // Returning here changes nothing else — the missing-id handling above
+        // has already run, the batch stays marked pending, and
+        // systemDialogInFlight is in this effect's key list so the run is
+        // retried as soon as the other dialog resolves.
+        if (systemDialogInFlight) return@LaunchedEffect
+
         val batch = existingItems.take(MAX_DELETE_REQUEST_BATCH)
         val batchIds = batch.map { it.first.id }
         val runIds = existingItems.map { it.first.id }
@@ -464,6 +571,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             ).intentSender
             deletionInFlightIds = batchIds
             deletionRunIds = runIds
+            systemDialogInFlight = true
             deleteResultLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
         } catch (e: Exception) {
             // createDeleteRequest makes a synchronous call into MediaProvider
@@ -477,8 +585,134 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             Log.e(TAG, "Failed to build/launch the system delete request", e)
             deletionInFlightIds = null
             deletionRunIds = null
+            // Release the gate wherever the ids are released, or a throw from
+            // the launch above would latch it and kill BOTH prompts. Safe even
+            // when the throw came from getDeletionIntent before the claim: the
+            // check above proved the gate was unowned and nothing between them
+            // suspends, so this can only ever clear this effect's own claim.
+            systemDialogInFlight = false
             viewModel.deferDeletion(batchIds)
             viewModel.reportError("Couldn't open the delete confirmation. Please try again.")
+        }
+    }
+
+    val pendingFavoriteSync by viewModel.pendingFavoriteSync.collectAsState()
+    val favoritePromptedThisSession by viewModel.favoritePromptedThisSession.collectAsState()
+
+    // True when the deletion effect above is armed to launch (or is already
+    // mid-run). Deletion takes priority over the favorite prompt, so the
+    // favorite effect yields while this is set instead of racing for the gate.
+    //
+    // Derived to a Boolean rather than keying the favorite effect on
+    // pendingDeletionUris directly: as a key, the list would restart (and so
+    // cancel) an in-progress favorite pass every time the bin's pending set
+    // changed content, where only the armed/not-armed transition actually
+    // matters here.
+    val deletionPromptArmed = pendingDeletionUris.isNotEmpty() && !promptedThisSession
+
+    val favoriteResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val ids = favoriteInFlightIds
+        favoriteInFlightIds = null
+        systemDialogInFlight = false
+        if (ids != null) {
+            if (result.resultCode == Activity.RESULT_OK) {
+                viewModel.confirmFavoriteSync(ids)
+            } else {
+                // Not a rollback: nothing was destroyed, the star simply did
+                // not reach MediaStore. deferFavoriteSync keeps isFavorite as
+                // the user set it and only stops the re-prompt.
+                viewModel.deferFavoriteSync(ids)
+            }
+        }
+    }
+
+    // Batched favorite sync. Deliberately mirrors the deletion effect's key
+    // list and guards; see that effect for why each key is needed.
+    // deletionPromptArmed is the one extra key: it is what makes "deletion
+    // takes priority" true rather than a coin flip between two effects that
+    // both suspend in filterExistingUris. It cannot starve this effect — every
+    // path out of the deletion effect either drops the pending rows
+    // (confirmDeletion), un-marks them (deferDeletion) or launches its dialog,
+    // and a launched dialog clears the gate on its result, so the armed state
+    // always resolves.
+    LaunchedEffect(
+        pendingFavoriteSync, favoritePromptedThisSession,
+        hasPermission, resumeTick, systemDialogInFlight, deletionPromptArmed
+    ) {
+        if (!hasPermission) return@LaunchedEffect
+        if (systemDialogInFlight || favoriteInFlightIds != null) return@LaunchedEffect
+        // deletionInFlightIds is checked as well as the gate because it is
+        // rememberSaveable: it can come back non-null on an Activity recreated
+        // while the delete dialog is showing, at which point the plain-remember
+        // gate has been reset to false. Neither read needs its own key —
+        // whatever clears either of them also clears the gate, and the gate IS
+        // a key. deletionPromptArmed is what enforces "deletion first" when
+        // both prompts become eligible in the same frame.
+        if (deletionInFlightIds != null || deletionPromptArmed) return@LaunchedEffect
+        if (pendingFavoriteSync.isEmpty() || favoritePromptedThisSession) return@LaunchedEffect
+        // Same reason as the deletion effect: a launch from the background can
+        // be silently dropped, which would leave favoriteInFlightIds and the
+        // gate stuck. resumeTick re-fires this effect on every foreground
+        // return.
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+
+        // One request carries one target state (see selectFavoriteBatch), and
+        // one request carries at most MAX_FAVORITE_REQUEST_BATCH URIs. Taking a
+        // prefix of an already-homogeneous batch keeps it homogeneous; the
+        // remainder keeps its pendingFavoriteSync flag and comes back on the
+        // next pass, when this request's result has cleared the gate.
+        val batch = selectFavoriteBatch(pendingFavoriteSync).take(MAX_FAVORITE_REQUEST_BATCH)
+        if (batch.isEmpty()) return@LaunchedEffect
+        val targetState = batch.first().isFavorite
+
+        val itemUris = batch.map { it to Uri.parse(it.mediaUri) }
+        val filterResult = MediaUriFilter.filterExistingUris(
+            context,
+            itemUris.map { it.second },
+            hasOnlyPartialMediaAccess = hasOnlyPartialMediaAccess(context)
+        )
+
+        // A row whose file is confirmed gone can never be starred in
+        // MediaStore. Clear its sync flag so it stops re-prompting; the kept
+        // row itself is left alone — unlike the deletion effect, nothing here
+        // ever drops a row.
+        val missingUris = filterResult.missing.toSet()
+        val missingIds = itemUris.filter { it.second in missingUris }.map { it.first.id }
+        if (missingIds.isNotEmpty()) viewModel.confirmFavoriteSync(missingIds)
+
+        val existingUris = filterResult.existing.toSet()
+        val sendable = itemUris.filter { it.second in existingUris }
+        if (sendable.isEmpty()) return@LaunchedEffect
+
+        // Re-check the gate after the suspension above and immediately before
+        // claiming it — see the identical check in the deletion effect for why
+        // the top-of-effect check alone is not enough.
+        if (systemDialogInFlight || favoriteInFlightIds != null) return@LaunchedEffect
+
+        val ids = sendable.map { it.first.id }
+        try {
+            val intent = MediaFavoriteHandler.getFavoriteIntent(
+                context, sendable.map { it.second }, targetState
+            )
+            favoriteInFlightIds = ids
+            systemDialogInFlight = true
+            favoriteResultLauncher.launch(
+                IntentSenderRequest.Builder(intent.intentSender).build()
+            )
+        } catch (e: Exception) {
+            // Same reasoning as the deletion effect's catch: createFavoriteRequest
+            // is a synchronous call into MediaProvider and can throw, and an
+            // uncaught throw here would kill the process. Release the ids and
+            // the gate, then surface it as a recoverable error.
+            Log.e(TAG, "Failed to build/launch the system favorite request", e)
+            favoriteInFlightIds = null
+            systemDialogInFlight = false
+            viewModel.deferFavoriteSync(ids)
+            viewModel.reportError("Couldn't open the favorite confirmation.")
         }
     }
 

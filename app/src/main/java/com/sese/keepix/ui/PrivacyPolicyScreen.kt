@@ -104,6 +104,15 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 TableRow("SharedPreferences", "retentionDays, batchSize, onboardingComplete, lastSessionId, fullscreenTutorialComplete")
                 Spacer(modifier = Modifier.height(4.dp))
                 BodyText("No media bytes are stored. Only URIs and metadata.")
+                Spacer(modifier = Modifier.height(4.dp))
+                BodyText(
+                    "When you favorite an item, Keepix asks Android to set that " +
+                        "photo or video's system favorite flag, so the star also " +
+                        "appears in your gallery app. Android shows you a " +
+                        "confirmation dialog first, and nothing is written unless " +
+                        "you confirm. This changes only that flag — no file " +
+                        "contents are read, copied or modified."
+                )
             }
 
             PolicySection(title = "5. Data Sharing") {
