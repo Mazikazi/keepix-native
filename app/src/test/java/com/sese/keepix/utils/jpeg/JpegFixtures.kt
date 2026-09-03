@@ -56,4 +56,43 @@ object JpegFixtures {
         for (p in parts) { p.copyInto(out, at); at += p.size }
         return out
     }
+
+    /**
+     * An APP2/MPF payload declaring [imageSizes].size images with those byte
+     * lengths. Layout after `"MPF "`: the 8-byte TIFF header, an IFD holding
+     * one entry (2 + 12 + 4 bytes), then the MP entry array.
+     *
+     * Shared rather than re-derived per test class: three hand-rolled TIFF
+     * writers that must agree byte-for-byte is three chances to encode the same
+     * misunderstanding three different ways, and a fixture bug here would look
+     * exactly like a parser bug. Tasks 2, 5 and 6 all build on this.
+     */
+    fun mpfPayload(imageSizes: List<Long>, littleEndian: Boolean = false): ByteArray {
+        val tiff = java.io.ByteArrayOutputStream()
+        fun u16(v: Int) {
+            if (littleEndian) { tiff.write(v and 0xFF); tiff.write(v shr 8) }
+            else { tiff.write(v shr 8); tiff.write(v and 0xFF) }
+        }
+        fun u32(v: Long) {
+            val b = intArrayOf(
+                ((v shr 24) and 0xFF).toInt(), ((v shr 16) and 0xFF).toInt(),
+                ((v shr 8) and 0xFF).toInt(), (v and 0xFF).toInt()
+            )
+            if (littleEndian) for (i in 3 downTo 0) tiff.write(b[i]) else for (i in 0..3) tiff.write(b[i])
+        }
+
+        if (littleEndian) { tiff.write('I'.code); tiff.write('I'.code) }
+        else { tiff.write('M'.code); tiff.write('M'.code) }
+        u16(0x002A)
+        u32(8L)                              // the first IFD follows the header
+        u16(1)                               // one entry
+        u16(0xB002)                          // MP Entry
+        u16(7)                               // UNDEFINED
+        u32((imageSizes.size * 16).toLong())
+        u32(8L + 2 + 12 + 4)                 // entry array offset, TIFF-relative
+        u32(0L)                              // no next IFD
+        for (s in imageSizes) { u32(0L); u32(s); u32(0L); u16(0); u16(0) }
+
+        return "MPF".toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + tiff.toByteArray()
+    }
 }
