@@ -641,7 +641,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                 // Not a rollback: nothing was destroyed, the star simply did
                 // not reach MediaStore. deferFavoriteSync keeps isFavorite as
                 // the user set it and only stops the re-prompt.
-                viewModel.deferFavoriteSync(ids)
+                viewModel.deferFavoriteSync()
 
                 // deferFavoriteSync suppresses the prompt for the rest of the
                 // session, which is right for the ids it was just given and
@@ -767,7 +767,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             favoriteInFlightIds = null
             favoriteRunIds = null
             systemDialogInFlight = false
-            viewModel.deferFavoriteSync(ids)
+            viewModel.deferFavoriteSync()
             viewModel.reportError("Couldn't open the favorite confirmation.")
         }
     }

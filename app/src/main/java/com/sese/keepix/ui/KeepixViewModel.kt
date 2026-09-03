@@ -696,7 +696,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      * *current* session is still suppressed via [_favoritePromptedThisSession],
      * exactly as before; only the on-disk flag's fate has changed.
      */
-    fun deferFavoriteSync(ids: List<Int>) {
+    fun deferFavoriteSync() {
         _favoritePromptedThisSession.value = true
     }
 

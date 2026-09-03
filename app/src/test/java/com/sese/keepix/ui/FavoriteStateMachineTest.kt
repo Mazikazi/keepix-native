@@ -90,7 +90,7 @@ class FavoriteStateMachineTest {
     fun `deferFavoriteSync suppresses this session but leaves the row pending for retry`() = runTest {
         val vm = ViewModelTestHarness.newViewModel(keptItemDao = keptItemDao)
 
-        vm.deferFavoriteSync(listOf(3))
+        vm.deferFavoriteSync()
         advanceUntilIdle()
 
         assertTrue(vm.favoritePromptedThisSession.value)
@@ -115,7 +115,7 @@ class FavoriteStateMachineTest {
         // of the process.
         val vm = ViewModelTestHarness.newViewModel(keptItemDao = keptItemDao)
 
-        vm.deferFavoriteSync(listOf(3))
+        vm.deferFavoriteSync()
         advanceUntilIdle()
         assertTrue(vm.favoritePromptedThisSession.value)
 
