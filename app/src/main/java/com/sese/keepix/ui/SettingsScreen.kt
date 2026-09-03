@@ -21,6 +21,7 @@ import com.sese.keepix.BuildConfig
 import com.sese.keepix.ui.components.*
 import com.sese.keepix.ui.theme.*
 import com.sese.keepix.utils.ReclaimEstimate
+import com.sese.keepix.utils.formatMegabytes
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -335,7 +336,7 @@ fun SettingsScreen(
                                         // file's declared index rather than a full
                                         // walk of every byte. The real figure is
                                         // computed per file at write time.
-                                        "about ${reclaimEstimate.estimatedBytes / (1024 * 1024)} MB",
+                                        "about ${formatMegabytes(reclaimEstimate.estimatedBytes)}",
                                         color = KeepGreen,
                                         style = MaterialTheme.typography.bodyLarge
                                     )

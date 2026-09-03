@@ -20,6 +20,7 @@ import com.sese.keepix.utils.PhotoCompressionAnalyzer
 import com.sese.keepix.utils.PhotoCompressor
 import com.sese.keepix.utils.ReclaimEstimate
 import com.sese.keepix.utils.SessionCleanupWorker
+import com.sese.keepix.utils.formatMegabytes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -934,7 +935,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         _compressionStatus.value = buildString {
                             append("Optimized $compressed photo${if (compressed == 1) "" else "s"}")
-                            append(", reclaiming ${saved / (1024 * 1024)} MB")
+                            append(", reclaiming ${formatMegabytes(saved)}")
                             if (failed > 0) append(". $failed could not be changed and were left as they were")
                             append(".")
                         }
