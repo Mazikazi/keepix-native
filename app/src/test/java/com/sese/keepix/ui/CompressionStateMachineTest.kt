@@ -7,6 +7,7 @@ import com.sese.keepix.utils.ReclaimEstimate
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -62,10 +63,35 @@ class CompressionStateMachineTest {
         coVerify(exactly = 0) { compressor.compress(any()) }
     }
 
+    /**
+     * A prior version of this test only checked that each URI was compressed
+     * exactly once -- true even for `uris.map { async { compress(it) } }.awaitAll()`,
+     * which would violate the one-file-at-a-time invariant PhotoCompressor's
+     * crash-safety journal depends on. This version uses a compressor stub
+     * that genuinely suspends (a [CompletableDeferred] await, not a timed
+     * delay -- real suspension regardless of which TestDispatcher backs
+     * Main) so overlapping compress() calls are actually observable: it
+     * tracks the concurrently-in-flight count and the call order, and a
+     * concurrent rewrite is caught two ways -- the loop would already have
+     * reached "uri://b" while "uri://a" is still mid-write (asserted
+     * immediately after the single onWriteGranted() call, before the gate is
+     * ever opened), and separately the max observed concurrency would be 2,
+     * not 1.
+     */
     @Test
     fun onWriteGranted_compressionKind_compressesEveryUriInSequence() = runTest {
-        coEvery { compressor.compress(any()) } answers {
-            CompressionOutcome.Compressed(firstArg(), 100_000)
+        val gate = CompletableDeferred<Unit>()
+        val order = mutableListOf<String>()
+        var concurrent = 0
+        var maxConcurrent = 0
+        coEvery { compressor.compress(any()) } coAnswers {
+            val uri = firstArg<String>()
+            concurrent++
+            maxConcurrent = maxOf(maxConcurrent, concurrent)
+            order.add(uri)
+            gate.await()
+            concurrent--
+            CompressionOutcome.Compressed(uri, 100_000)
         }
         val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
         ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<ReclaimEstimate?>>(
@@ -75,6 +101,68 @@ class CompressionStateMachineTest {
 
         vm.onWriteGranted()
 
+        // A serialized loop is suspended inside the very first compress()
+        // call at this point and cannot have reached "uri://b" yet.
+        assertEquals("only one file may be mid-write at a time", 1, concurrent)
+        assertEquals(listOf("uri://a"), order)
+
+        gate.complete(Unit)
+
+        assertEquals("writes must never overlap", 1, maxConcurrent)
+        assertEquals(
+            "compress() must be called in the requested order",
+            listOf("uri://a", "uri://b"), order
+        )
+        coVerify(exactly = 1) { compressor.compress("uri://a") }
+        coVerify(exactly = 1) { compressor.compress("uri://b") }
+        assertNull("the request must clear once it has run", vm.pendingWrite.value)
+    }
+
+    /**
+     * Finding 1: `onWriteGranted()` reads `_pendingWrite` and does not clear it
+     * until the whole batch's `finally`, but `photoCompressor.compress(uri)`
+     * suspends -- a real dispatch away from Main and back on every file. A
+     * Main-thread re-entry into `onWriteGranted()` during that window (a
+     * duplicate activity-result callback, a config-change redelivery, ...)
+     * must not launch a second concurrent pass over the same URIs, since
+     * PhotoCompressor's crash-safety journal assumes at most one file is ever
+     * mid-write.
+     */
+    @Test
+    fun onWriteGranted_reentrantCallWhileInFlight_doesNotStartASecondPass() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val order = mutableListOf<String>()
+        var concurrent = 0
+        var maxConcurrent = 0
+        coEvery { compressor.compress(any()) } coAnswers {
+            val uri = firstArg<String>()
+            concurrent++
+            maxConcurrent = maxOf(maxConcurrent, concurrent)
+            order.add(uri)
+            gate.await()
+            concurrent--
+            CompressionOutcome.Compressed(uri, 100_000)
+        }
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<ReclaimEstimate?>>(
+            vm, "_compressionEstimate"
+        ).value = estimate("uri://a", "uri://b")
+        vm.requestCompression()
+
+        vm.onWriteGranted() // first pass starts, suspends mid compress("uri://a")
+        vm.onWriteGranted() // re-entrant call while the first pass is still in flight
+        vm.onWriteGranted() // and again, in case a caller retries
+
+        assertEquals(
+            "a re-entrant call while a run is in flight must not start a second pass",
+            1, concurrent
+        )
+        assertEquals(listOf("uri://a"), order)
+
+        gate.complete(Unit)
+
+        assertEquals("writes must never overlap", 1, maxConcurrent)
+        assertEquals(listOf("uri://a", "uri://b"), order)
         coVerify(exactly = 1) { compressor.compress("uri://a") }
         coVerify(exactly = 1) { compressor.compress("uri://b") }
         assertNull("the request must clear once it has run", vm.pendingWrite.value)

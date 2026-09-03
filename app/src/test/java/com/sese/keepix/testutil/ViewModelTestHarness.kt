@@ -144,6 +144,7 @@ object ViewModelTestHarness {
         setField(vm, "seenMediaIds", mutableSetOf<Long>())
         setField<Any?>(vm, "pageCursor", null)
         setField(vm, "batchLoadInFlight", false)
+        setField(vm, "writeInFlight", false)
         setField(vm, "photoCompressor", photoCompressor)
         val pendingWrite = MutableStateFlow<KeepixViewModel.PendingWriteRequest?>(null)
         setField(vm, "_pendingWrite", pendingWrite)

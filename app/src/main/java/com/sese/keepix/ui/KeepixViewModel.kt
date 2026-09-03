@@ -775,6 +775,29 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
 
     private var scanJob: Job? = null
 
+    // Re-entrancy guard for onWriteGranted(), same shape as batchLoadInFlight
+    // above. photoCompressor.compress(uri) suspends (its io does
+    // withContext(Dispatchers.IO) for both the read and the overwrite), so a
+    // batch of MAX_COMPRESSION_BATCH files yields the Main thread up to ~2x
+    // that many times while _pendingWrite is still non-null. Any Main-thread
+    // re-entry into onWriteGranted() during that window -- a duplicate
+    // activity-result callback, a config-change redelivery, a wiring bug --
+    // would otherwise read the same request and run a second concurrent pass
+    // over the same URIs, breaking the one-file-at-a-time invariant that
+    // makes the crash-safety journal's single-row recovery sufficient:
+    // CompressionJournalEntity's primary key is mediaUri with
+    // OnConflictStrategy.REPLACE, so two concurrent compress() calls on one
+    // URI can race on the journal insert/delete and orphan or delete the
+    // wrong backup file.
+    //
+    // Deliberately independent of _pendingWrite's own lifecycle: this flag is
+    // set true before the first suspension point (immediately, synchronously,
+    // before viewModelScope.launch even starts running) and cleared in the
+    // same finally that already clears _pendingWrite -- but _pendingWrite
+    // itself must stay non-null for the whole run, not be cleared early, so a
+    // future MainActivity consumer can observe that a write is in progress.
+    private var writeInFlight = false
+
     /**
      * Repairs anything a previous run left mid-write. Called from `init`, so a
      * recovery request is always armed before the user can arm a compression one.
@@ -875,9 +898,15 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      * Files are rewritten strictly one at a time. The confirmation batches; the
      * writes do not -- at most one file may ever be mid-write, which is what
      * makes the journal's single-row recovery sufficient.
+     *
+     * Guarded by [writeInFlight] against re-entrancy: a second Main-thread call
+     * while a run is already in progress is a deliberate no-op rather than a
+     * second concurrent pass over the same URIs (see [writeInFlight]'s doc).
      */
     fun onWriteGranted() {
+        if (writeInFlight) return
         val request = _pendingWrite.value ?: return
+        writeInFlight = true
         viewModelScope.launch {
             try {
                 when (request.kind) {
@@ -918,6 +947,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 _error.value = "Something went wrong while optimizing. Your photos were left unchanged."
             } finally {
                 _pendingWrite.value = null
+                writeInFlight = false
             }
         }
     }
