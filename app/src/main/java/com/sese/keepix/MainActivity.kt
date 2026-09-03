@@ -41,6 +41,7 @@ import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.utils.MediaDeletionHandler
 import com.sese.keepix.utils.MediaFavoriteHandler
 import com.sese.keepix.utils.MediaUriFilter
+import com.sese.keepix.utils.MediaWriteHandler
 
 private const val TAG = "MainActivity"
 
@@ -315,6 +316,25 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // which can cause one extra, harmless re-prompt, never a lost row.
     var favoriteRunIds by remember { mutableStateOf<List<Int>?>(null) }
 
+    // Guards the write-request (compression/recovery) effect against a second
+    // launch while one is already in flight. Declared up here, not beside that
+    // effect below, for the same reason as favoriteInFlightIds: so the
+    // ON_RESUME stuck-guard can clear it too. That matters more here than for
+    // favoriteInFlightIds -- if a write-request launch is silently dropped
+    // (e.g. background-activity-start restrictions while this Activity was
+    // stopped), its result callback never runs, and unlike favoriteInFlightIds
+    // this flag is rememberSaveable, so an un-recovered stuck `true` would
+    // survive process death too and permanently block every future compression
+    // prompt for the life of the install, not just the process.
+    //
+    // rememberSaveable, unlike favoriteInFlightIds/deletionInFlightIds, for a
+    // different reason than either: it carries no id set to restore (pendingWrite
+    // already holds the whole request; there is nothing else to reconstruct), but
+    // an Activity recreated while the write dialog is showing must not let the
+    // plain-remember systemDialogInFlight gate resetting to false trick this
+    // effect into launching a second request behind the one still on screen.
+    var writeRequestInFlight by rememberSaveable { mutableStateOf(false) }
+
     // True once this composition has processed one ON_RESUME that wasn't the
     // synchronous replay LifecycleRegistry.addObserver fires the instant this
     // DisposableEffect's observer is added (it walks a newly-added observer
@@ -419,18 +439,28 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                         deletionRunIds = null
                     }
                     // Same recovery for the favorite request, and for the gate
-                    // both requests share. The gate is the more dangerous of
-                    // the two to leave latched: deletionInFlightIds only
+                    // all three requests share. The gate is the more dangerous
+                    // of the three to leave latched: deletionInFlightIds only
                     // suppresses the delete prompt, but a stuck
-                    // systemDialogInFlight would suppress BOTH prompts for the
-                    // rest of the process. It is only ever set together with
-                    // one of the two id sets, so clearing it here — on a
-                    // genuine ON_RESUME, i.e. once any dialog that really did
-                    // appear has already delivered its result and cleared this
-                    // itself — can never cancel a live dialog.
+                    // systemDialogInFlight would suppress ALL THREE prompts for
+                    // the rest of the process. It is only ever set together
+                    // with one of the three guards below, so clearing it here —
+                    // on a genuine ON_RESUME, i.e. once any dialog that really
+                    // did appear has already delivered its result and cleared
+                    // this itself — can never cancel a live dialog.
                     if (favoriteInFlightIds != null) {
                         favoriteInFlightIds = null
                         favoriteRunIds = null
+                    }
+                    // Same recovery for the write-request (compression/recovery)
+                    // effect's guard. More important to catch here than for the
+                    // other two: writeRequestInFlight is rememberSaveable (see
+                    // its declaration for why), so an un-recovered stuck `true`
+                    // would survive process death too, not just the rest of
+                    // this process -- permanently blocking every future
+                    // compression prompt for the life of the install.
+                    if (writeRequestInFlight) {
+                        writeRequestInFlight = false
                     }
                     if (systemDialogInFlight) {
                         systemDialogInFlight = false
@@ -667,6 +697,12 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
     }
 
+    // Mirror of deletionPromptArmed, for the compression effect below to yield
+    // to. Derived to a Boolean for the same reason: as a key, the list itself
+    // would restart an in-progress pass whenever the pending set's content
+    // changed, where only the armed/not-armed transition matters.
+    val favoritePromptArmed = pendingFavoriteSync.isNotEmpty() && !favoritePromptedThisSession
+
     // Batched favorite sync. Deliberately mirrors the deletion effect's key
     // list and guards; see that effect for why each key is needed.
     // deletionPromptArmed is the one extra key: it is what makes "deletion
@@ -769,6 +805,99 @@ fun KeepixApp(viewModel: KeepixViewModel) {
             systemDialogInFlight = false
             viewModel.deferFavoriteSync()
             viewModel.reportError("Couldn't open the favorite confirmation.")
+        }
+    }
+
+    val pendingWrite by viewModel.pendingWrite.collectAsState()
+
+    val writeResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        writeRequestInFlight = false
+        systemDialogInFlight = false
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.onWriteGranted()
+        } else {
+            // Nothing was written and no backup exists yet: the grant is
+            // obtained before the first backup, so a decline leaves the file
+            // system exactly as it was.
+            viewModel.onWriteDenied()
+        }
+    }
+
+    // The third and lowest-priority claimant of the shared system-dialog gate.
+    // Deletion and favorite both act on state the user already committed to and
+    // that changes on a timer; a compression run is entirely user-initiated and
+    // can always wait for the next pass. Yielding to both is what keeps this
+    // from becoming a coin flip between three effects that all suspend in
+    // filterExistingUris.
+    LaunchedEffect(
+        pendingWrite, hasPermission, resumeTick, systemDialogInFlight,
+        deletionPromptArmed, favoritePromptArmed
+    ) {
+        if (!hasPermission) return@LaunchedEffect
+        val request = pendingWrite ?: return@LaunchedEffect
+        if (systemDialogInFlight || writeRequestInFlight) return@LaunchedEffect
+        if (deletionInFlightIds != null || deletionPromptArmed) return@LaunchedEffect
+        if (favoriteInFlightIds != null || favoritePromptArmed) return@LaunchedEffect
+        // Cheap pre-filter bail-out, not the check that makes the launch safe.
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+
+        val uris = request.uris.map { Uri.parse(it) }
+        val filterResult = MediaUriFilter.filterExistingUris(
+            context, uris, hasOnlyPartialMediaAccess = hasOnlyPartialMediaAccess(context)
+        )
+        // A recovery row whose file is CONFIRMED gone can never be restored, and
+        // leaving it would re-arm this request on every launch forever. Release
+        // those rows and their backups. Only proven-absent URIs qualify --
+        // filterExistingUris routes anything it merely could not verify to
+        // `existing`, and those are still worth attempting.
+        //
+        // Not done for a COMPRESSION request: nothing is journalled yet at this
+        // point, so a vanished file needs no cleanup and is simply dropped from
+        // the batch by the filter.
+        if (request.kind == KeepixViewModel.WriteRequestKind.RECOVERY &&
+            filterResult.missing.isNotEmpty()
+        ) {
+            viewModel.discardInterruptedWrites(filterResult.missing.map { it.toString() })
+        }
+
+        val sendable = filterResult.existing
+        if (sendable.isEmpty()) {
+            // Nothing left to ask about. Clear the request; for a recovery the
+            // rows were just released above, so this cannot re-arm.
+            viewModel.onWriteDenied()
+            return@LaunchedEffect
+        }
+
+        // Re-check RESUMED and the gate after the suspension above, in the same
+        // position and for the same reason as the deletion and favorite effects:
+        // filterExistingUris does one blocking ContentResolver query per URI, so
+        // the app can easily be backgrounded during it, and both this effect and
+        // the other two suspend there. resumeTick re-fires this effect on
+        // foreground return, so the request is simply retried.
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+        if (systemDialogInFlight || writeRequestInFlight) return@LaunchedEffect
+
+        try {
+            val intent = MediaWriteHandler.getWriteIntent(context, sendable)
+            writeRequestInFlight = true
+            systemDialogInFlight = true
+            writeResultLauncher.launch(IntentSenderRequest.Builder(intent.intentSender).build())
+        } catch (e: Exception) {
+            // createWriteRequest is a synchronous call into MediaProvider and can
+            // throw; an uncaught throw here would kill the process. Release the
+            // gate wherever the flag is released, or a throw would latch it and
+            // kill all three prompts.
+            Log.e(TAG, "Failed to build/launch the system write request", e)
+            writeRequestInFlight = false
+            systemDialogInFlight = false
+            viewModel.onWriteDenied()
+            viewModel.reportError("Couldn't open the write confirmation. Please try again.")
         }
     }
 

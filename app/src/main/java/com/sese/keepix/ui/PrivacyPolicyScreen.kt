@@ -66,7 +66,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Effective Date: 2026-07-09  •  Version 1.0",
+                text = "Effective Date: 2026-07-09  •  Version 1.2",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextMuted
             )
@@ -79,7 +79,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 BulletText("Swipe left (Delete) — The item moves to an in-app Recycle Bin with a configurable retention period (default 10 days). You can restore it anytime before expiry. After expiry, Keepix permanently deletes the item from your device via the system MediaStore.")
                 BulletText("Session Mode (0-day retention) — Items deleted during a session are permanently removed when you next open the app.")
                 Spacer(modifier = Modifier.height(4.dp))
-                BodyText("All decisions happen on your device. No media files are copied, uploaded, or transmitted.")
+                BodyText("All decisions happen on your device. Nothing is ever uploaded or transmitted.")
             }
 
             PolicySection(title = "2. What Keepix Does NOT Do") {
@@ -94,16 +94,27 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 TableRow("READ_MEDIA_IMAGES (API 33+) / READ_EXTERNAL_STORAGE (API ≤32)", "Read your photo library to display cards")
                 TableRow("READ_MEDIA_VIDEO (API 33+)", "Read your video library to display cards")
                 Spacer(modifier = Modifier.height(4.dp))
-                BodyText("These are read-only. Keepix never requests WRITE_EXTERNAL_STORAGE or MANAGE_EXTERNAL_STORAGE.")
+                BodyText(
+                    "Keepix never requests WRITE_EXTERNAL_STORAGE or " +
+                        "MANAGE_EXTERNAL_STORAGE. Deleting, favoriting and optimizing " +
+                        "each go through Android's own confirmation dialog instead, one " +
+                        "file set at a time, and only ever affect files you selected."
+                )
             }
 
             PolicySection(title = "4. Data Stored On Your Device") {
                 BodyText("Keepix uses a local Room (SQLite) database and a SharedPreferences file.")
                 TableRow("bin_items", "Recycle Bin items pending permanent deletion")
                 TableRow("kept_items", "Items you chose to keep (prevents re-showing)")
+                TableRow("compression_journal", "Tracks a photo optimization that is mid-write, so an interrupted one can be undone")
                 TableRow("SharedPreferences", "retentionDays, batchSize, onboardingComplete, lastSessionId, fullscreenTutorialComplete")
                 Spacer(modifier = Modifier.height(4.dp))
-                BodyText("No media bytes are stored. Only URIs and metadata.")
+                BodyText(
+                    "No media bytes are stored long-term. Only URIs and metadata " +
+                        "— except for the brief window during an optimization, when " +
+                        "one original is held in app-private storage until the " +
+                        "result is verified."
+                )
                 Spacer(modifier = Modifier.height(4.dp))
                 BodyText(
                     "When you favorite an item, Keepix asks Android to set that " +
@@ -112,6 +123,18 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                         "confirmation dialog first, and nothing is written unless " +
                         "you confirm. This changes only that flag — no file " +
                         "contents are read, copied or modified."
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                BodyText(
+                    "Optimizing a photo rewrites that file on your device to remove " +
+                        "redundant data some cameras embed alongside the picture — a " +
+                        "duplicate second copy of the shot. The image itself is not " +
+                        "altered: every pixel is copied across untouched, along with " +
+                        "the date, orientation, location and colour profile. Android " +
+                        "shows you a confirmation dialog first, and nothing is written " +
+                        "unless you confirm. Keepix keeps its own copy of the original " +
+                        "until it has read the result back and checked it, and restores " +
+                        "the original if anything goes wrong."
                 )
             }
 
