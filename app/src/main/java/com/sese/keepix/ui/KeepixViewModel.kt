@@ -688,20 +688,16 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * The user cancelled the favorite dialog. Unlike [deferDeletion] this does NOT
      * revert the user's intent: nothing was destroyed, the star simply did not
-     * reach MediaStore. Clearing the sync flag stops it re-prompting on every
-     * future launch; the star stays set in-app.
+     * reach MediaStore. The sync flag is left set so the row is retried on the
+     * next launch -- a cancelled star that silently never reaches MediaStore is
+     * a divergence between Keepix's star and Google Photos' star that this app
+     * cannot detect or repair later, so the only safe move is to keep the
+     * intent queued rather than treat the cancel as done. Re-prompting for the
+     * *current* session is still suppressed via [_favoritePromptedThisSession],
+     * exactly as before; only the on-disk flag's fate has changed.
      */
     fun deferFavoriteSync(ids: List<Int>) {
         _favoritePromptedThisSession.value = true
-        if (ids.isEmpty()) return
-        viewModelScope.launch {
-            try {
-                keptItemDao.clearPendingFavoriteSync(ids)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to clear deferred favorite sync flag", e)
-                _error.value = "Some favorites could not be saved."
-            }
-        }
     }
 
     /**

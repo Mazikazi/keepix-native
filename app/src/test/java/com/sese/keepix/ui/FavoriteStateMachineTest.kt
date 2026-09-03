@@ -87,7 +87,7 @@ class FavoriteStateMachineTest {
     }
 
     @Test
-    fun `deferFavoriteSync stops re-prompting without unsetting the star`() = runTest {
+    fun `deferFavoriteSync suppresses this session but leaves the row pending for retry`() = runTest {
         val vm = ViewModelTestHarness.newViewModel(keptItemDao = keptItemDao)
 
         vm.deferFavoriteSync(listOf(3))
@@ -95,8 +95,11 @@ class FavoriteStateMachineTest {
 
         assertTrue(vm.favoritePromptedThisSession.value)
         // Nothing was destroyed, so unlike deletion there is nothing to undo:
-        // the star stays set in-app, the sync flag is simply cleared.
-        coVerify(exactly = 1) { keptItemDao.clearPendingFavoriteSync(listOf(3)) }
+        // the star stays set in-app. Unlike confirm, the pending flag must
+        // NOT be cleared -- a cancelled star that silently never reaches
+        // MediaStore is a divergence Keepix can't detect or repair later, so
+        // the row stays queued and is retried on the next launch instead.
+        coVerify(exactly = 0) { keptItemDao.clearPendingFavoriteSync(any()) }
         coVerify(exactly = 0) { keptItemDao.setFavorite(any(), any()) }
     }
 
