@@ -1,0 +1,157 @@
+package com.sese.keepix.utils.jpeg
+
+import com.sese.keepix.utils.jpeg.JpegFixtures.app
+import com.sese.keepix.utils.jpeg.JpegFixtures.concat
+import com.sese.keepix.utils.jpeg.JpegFixtures.eoi
+import com.sese.keepix.utils.jpeg.JpegFixtures.sof0
+import com.sese.keepix.utils.jpeg.JpegFixtures.soi
+import com.sese.keepix.utils.jpeg.JpegFixtures.sos
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class JpegRewriterTest {
+
+    private val scan = ByteArray(2048) { (it % 251).toByte() }
+
+    /** A dual-camera-shaped file: MPF index segment plus a whole trailing JPEG. */
+    private fun fileWithMpf(secondaryPayload: Int = 200_000): ByteArray {
+        val primary = concat(
+            soi(),
+            app(JpegMarkers.APP0, "JFIF", ByteArray(9)),
+            app(JpegMarkers.APP1, "Exif", ByteArray(2000)),
+            app(JpegMarkers.APP2, "ICC_PROFILE", ByteArray(3000)),
+            app(JpegMarkers.APP2, "MPF", ByteArray(80)),
+            app(JpegMarkers.APP1, "http://ns.adobe.com/xap/1.0/", ByteArray(400)),
+            sof0(), sos(scan), eoi()
+        )
+        val secondary = concat(soi(), sof0(), sos(ByteArray(secondaryPayload) { 7 }), eoi())
+        return concat(primary, secondary)
+    }
+
+    @Test
+    fun planStrip_dropsOnlyTheMpfSegment_andTruncatesAtThePrimaryEoi() {
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val plan = JpegRewriter.planStrip(s)
+
+        val mpf = s.segments.single { it.marker == JpegMarkers.APP2 && it.identifier == "MPF" }
+        assertEquals(setOf(mpf.offset), plan.droppedSegmentOffsets)
+        assertEquals(s.primaryEndOffset, plan.truncateAt)
+        assertEquals(mpf.length + s.trailingBytes, plan.bytesSaved)
+        assertEquals(bytes.size - plan.bytesSaved, plan.outputSize)
+    }
+
+    @Test
+    fun rewrite_preservesScanDataByteForByte() {
+        // The core lossless claim, asserted directly against the actual bytes.
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val out = JpegRewriter.rewrite(bytes, s, JpegRewriter.planStrip(s))
+
+        val outStruct = JpegParser.parseFull(out)!!
+        val inSos = s.segments.last { it.marker == JpegMarkers.SOS }
+        val outSos = outStruct.segments.last { it.marker == JpegMarkers.SOS }
+
+        val inScan = bytes.copyOfRange(inSos.offset + inSos.length, s.primaryEndOffset)
+        val outScan = out.copyOfRange(outSos.offset + outSos.length, outStruct.primaryEndOffset)
+        assertArrayEquals("entropy-coded scan data must be untouched", inScan, outScan)
+    }
+
+    @Test
+    fun rewrite_keepsIccXmpExifAndJfifByteForByte() {
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val out = JpegRewriter.rewrite(bytes, s, JpegRewriter.planStrip(s))
+        val outStruct = JpegParser.parseFull(out)!!
+
+        val kept = listOf("JFIF", "Exif", "ICC_PROFILE", "http://ns.adobe.com/xap/1.0/")
+        for (id in kept) {
+            val a = s.segments.single { it.identifier == id }
+            val b = outStruct.segments.single { it.identifier == id }
+            assertArrayEquals(
+                "segment $id must survive byte-for-byte",
+                bytes.copyOfRange(a.offset, a.offset + a.length),
+                out.copyOfRange(b.offset, b.offset + b.length)
+            )
+        }
+        assertTrue(
+            "MPF must be gone",
+            outStruct.segments.none { it.marker == JpegMarkers.APP2 && it.identifier == "MPF" }
+        )
+    }
+
+    @Test
+    fun rewrite_outputIsAStructurallyValidJpegWithNoTrailingBytes() {
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val out = JpegRewriter.rewrite(bytes, s, JpegRewriter.planStrip(s))
+
+        val outStruct = JpegParser.parseFull(out)
+        assertNotNull(outStruct)
+        assertEquals(0, outStruct!!.trailingBytes)
+        assertEquals(out.size, outStruct.primaryEndOffset)
+    }
+
+    @Test
+    fun planStrip_fileWithNothingToStrip_savesNothing() {
+        val bytes = concat(soi(), app(JpegMarkers.APP1, "Exif", ByteArray(100)), sof0(), sos(scan), eoi())
+        val s = JpegParser.parseFull(bytes)!!
+        val plan = JpegRewriter.planStrip(s)
+
+        assertEquals(0, plan.bytesSaved)
+        assertTrue(plan.droppedSegmentOffsets.isEmpty())
+        assertFalse(JpegRewriter.meetsSavingFloor(plan, bytes.size))
+    }
+
+    @Test
+    fun meetsSavingFloor_requiresBothAbsoluteAndRelativeGains() {
+        fun plan(saved: Int) = StripPlan(emptySet(), 0, saved, 0)
+
+        // 25 KB saved out of 10 MB is 0.24% -- fails the ratio.
+        assertFalse(JpegRewriter.meetsSavingFloor(plan(25 * 1024), 10 * 1024 * 1024))
+        // 10 KB saved out of 100 KB is 10% -- fails the absolute floor.
+        assertFalse(JpegRewriter.meetsSavingFloor(plan(10 * 1024), 100 * 1024))
+        // Exactly at each boundary: the spec says strictly greater.
+        assertFalse(JpegRewriter.meetsSavingFloor(plan(20 * 1024), 400 * 1024))
+        // 200 KB out of 3 MB clears both.
+        assertTrue(JpegRewriter.meetsSavingFloor(plan(200 * 1024), 3 * 1024 * 1024))
+    }
+
+    @Test
+    fun planStrip_keepsAnyAppSegmentItCannotIdentify() {
+        // Unknown means unknown. Never drop on a guess.
+        val bytes = concat(
+            soi(),
+            JpegFixtures.segment(JpegMarkers.APP2, ByteArray(64) { 0x5A }),  // no NUL-terminated id
+            sof0(), sos(scan), eoi()
+        )
+        val s = JpegParser.parseFull(bytes)!!
+        val plan = JpegRewriter.planStrip(s)
+        assertTrue(plan.droppedSegmentOffsets.isEmpty())
+
+        val out = JpegRewriter.rewrite(bytes, s, plan)
+        assertArrayEquals("an unrecognised segment must be copied unchanged", bytes, out)
+    }
+
+    @Test
+    fun rewrite_multipleMpfSegments_dropsAllOfThem() {
+        val bytes = concat(
+            soi(),
+            app(JpegMarkers.APP2, "MPF", ByteArray(40)),
+            app(JpegMarkers.APP1, "Exif", ByteArray(100)),
+            app(JpegMarkers.APP2, "MPF", ByteArray(40)),
+            sof0(), sos(scan), eoi()
+        )
+        val s = JpegParser.parseFull(bytes)!!
+        val plan = JpegRewriter.planStrip(s)
+        assertEquals(2, plan.droppedSegmentOffsets.size)
+
+        val out = JpegRewriter.rewrite(bytes, s, plan)
+        assertEquals(plan.outputSize, out.size)
+        assertNotNull(JpegParser.parseFull(out))
+    }
+}
