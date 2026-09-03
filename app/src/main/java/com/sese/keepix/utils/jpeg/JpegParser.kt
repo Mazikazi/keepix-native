@@ -18,6 +18,37 @@ object JpegParser {
     private fun u16(b: ByteArray, i: Int): Int = (u8(b, i) shl 8) or u8(b, i + 1)
 
     /**
+     * Skips a run of 0xFF fill bytes from position [from] and returns the position of the
+     * next byte (the marker byte). A run of FF bytes before a marker is legal fill per JPEG.
+     *
+     * Returns null if the end of bytes is reached while skipping (ran out of data).
+     */
+    private fun skipFillBytes(bytes: ByteArray, from: Int, n: Int): Int? {
+        var q = from
+        while (q < n && u8(bytes, q) == 0xFF) q++
+        if (q >= n) return null
+        return q
+    }
+
+    /**
+     * Decodes the 2-byte segment length field at position [markerPos] + 1 and validates it.
+     *
+     * Returns (segStart, segLength) where:
+     * - segStart is the position of the 0xFF before the marker (markerPos - 1)
+     * - segLength is the total segment size including the 0xFF marker pair and declared payload
+     *
+     * Returns null if the decoded length is invalid (< 2 per JPEG spec).
+     * Does not check if the segment extends past the end of bytes -- callers handle bounds checking.
+     */
+    private fun getSegmentBounds(bytes: ByteArray, markerPos: Int): Pair<Int, Int>? {
+        val declared = u16(bytes, markerPos + 1)
+        if (declared < 2) return null
+        val segStart = markerPos - 1
+        val segLength = 2 + declared
+        return Pair(segStart, segLength)
+    }
+
+    /**
      * Parses the marker chain of the first [available] bytes of [bytes], stopping
      * at the SOS. Use this when only a prefix of the file has been read.
      */
@@ -32,22 +63,14 @@ object JpegParser {
             if (p >= n) return HeaderResult.NeedMoreBytes
             if (u8(bytes, p) != 0xFF) return HeaderResult.Malformed
 
-            // A run of FF bytes before a marker is legal fill.
-            var q = p
-            while (q < n && u8(bytes, q) == 0xFF) q++
-            if (q >= n) return HeaderResult.NeedMoreBytes
-
-            val marker = u8(bytes, q)
-            if (marker == JpegMarkers.SOS) return HeaderResult.Ok(JpegHeader(segments, q - 1))
+            val markerPos = skipFillBytes(bytes, p, n) ?: return HeaderResult.NeedMoreBytes
+            val marker = u8(bytes, markerPos)
+            if (marker == JpegMarkers.SOS) return HeaderResult.Ok(JpegHeader(segments, markerPos - 1))
             if (marker == JpegMarkers.EOI) return HeaderResult.Malformed  // EOI before any scan
-            if (JpegMarkers.isStandalone(marker)) { p = q + 1; continue }
+            if (JpegMarkers.isStandalone(marker)) { p = markerPos + 1; continue }
 
-            if (q + 2 >= n) return HeaderResult.NeedMoreBytes
-            val declared = u16(bytes, q + 1)
-            if (declared < 2) return HeaderResult.Malformed
-
-            val segStart = q - 1
-            val segLength = 2 + declared
+            if (markerPos + 2 >= n) return HeaderResult.NeedMoreBytes
+            val (segStart, segLength) = getSegmentBounds(bytes, markerPos) ?: return HeaderResult.Malformed
             if (segStart + segLength > n) {
                 // Could be either a truncated read or a corrupt length. Only the
                 // full file can tell, so ask for more rather than condemning it.
@@ -74,20 +97,13 @@ object JpegParser {
             if (p >= n) return null
             if (u8(bytes, p) != 0xFF) return null
 
-            var q = p
-            while (q < n && u8(bytes, q) == 0xFF) q++
-            if (q >= n) return null
+            val markerPos = skipFillBytes(bytes, p, n) ?: return null
+            val marker = u8(bytes, markerPos)
+            if (marker == JpegMarkers.EOI) return JpegStructure(segments, markerPos + 1, n)
+            if (JpegMarkers.isStandalone(marker)) { p = markerPos + 1; continue }
 
-            val marker = u8(bytes, q)
-            if (marker == JpegMarkers.EOI) return JpegStructure(segments, q + 1, n)
-            if (JpegMarkers.isStandalone(marker)) { p = q + 1; continue }
-
-            if (q + 2 >= n) return null
-            val declared = u16(bytes, q + 1)
-            if (declared < 2) return null
-
-            val segStart = q - 1
-            val segLength = 2 + declared
+            if (markerPos + 2 >= n) return null
+            val (segStart, segLength) = getSegmentBounds(bytes, markerPos) ?: return null
             if (segStart + segLength > n) return null
             segments += JpegSegment(marker, segStart, segLength, identifierAt(bytes, marker, segStart, segLength))
             p = segStart + segLength
