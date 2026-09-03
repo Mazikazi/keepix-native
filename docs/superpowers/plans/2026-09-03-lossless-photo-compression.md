@@ -2063,7 +2063,9 @@ class ReclaimEstimateTest {
     fun estimateFromHeader_mpfPresent_countsTheTrailingImageAndTheIndexSegment() {
         val payload = JpegFixtures.mpfPayload(listOf(2_000_000L))
         val bytes = concat(
-            soi(), app(JpegMarkers.APP2, "MPF", payload), sof0(), sos(byteArrayOf(1)), eoi()
+            // segment(), NOT app(): mpfPayload already begins with "MPF ", and app()
+            // would prepend a second copy, leaving MpfIndex unable to read the index.
+            soi(), JpegFixtures.segment(JpegMarkers.APP2, payload), sof0(), sos(byteArrayOf(1)), eoi()
         )
         val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
         val mpfSegment = header.segments.single { it.identifier == "MPF" }
@@ -2093,7 +2095,7 @@ class ReclaimEstimateTest {
     fun estimateFromHeader_declaredSizeExceedsTheFile_estimatesZero() {
         // A nonsensical index must not produce a negative or inflated figure.
         val bytes = concat(
-            soi(), app(JpegMarkers.APP2, "MPF", JpegFixtures.mpfPayload(listOf(9_000_000L))),
+            soi(), JpegFixtures.segment(JpegMarkers.APP2, JpegFixtures.mpfPayload(listOf(9_000_000L))),
             sof0(), sos(byteArrayOf(1)), eoi()
         )
         val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
