@@ -8,6 +8,7 @@ import com.sese.keepix.utils.jpeg.JpegMarkers
 import com.sese.keepix.utils.jpeg.JpegParser
 import com.sese.keepix.utils.jpeg.JpegRewriter
 import com.sese.keepix.utils.jpeg.MpfIndex
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -66,6 +67,8 @@ class PhotoCompressor(
     suspend fun compress(uriString: String): CompressionOutcome {
         val original = try {
             io.readAll(uriString)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Could not read $uriString", e)
             return CompressionOutcome.Failed(uriString, "unreadable", restored = true)
@@ -110,6 +113,8 @@ class PhotoCompressor(
 
         val rewritten = try {
             JpegRewriter.rewrite(original, structure, plan)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Rewrite failed for $uriString", e)
             return CompressionOutcome.Skipped(uriString, "rewrite failed")
@@ -124,6 +129,8 @@ class PhotoCompressor(
         val backup = File(backupDir, "${UUID.randomUUID()}.bak")
         try {
             writeBackup(backup, original)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Could not write a backup for $uriString", e)
             withContext(Dispatchers.IO) { backup.delete() }
@@ -150,6 +157,8 @@ class PhotoCompressor(
                     startedAt = System.currentTimeMillis()
                 )
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Could not journal $uriString before writing", e)
             withContext(Dispatchers.IO) { backup.delete() }
@@ -167,6 +176,13 @@ class PhotoCompressor(
                 // image.
                 return restore(uriString, backup, "read-back did not match what was written")
             }
+        } catch (e: CancellationException) {
+            // Do not attempt a restore on our way out: the journal row and
+            // backup are already in place and untouched, which is exactly the
+            // state the next launch's recover() needs to find to retry this
+            // file. Calling restore() here would itself immediately hit
+            // cancellation on its own suspend calls and accomplish nothing.
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Write failed for $uriString", e)
             return restore(uriString, backup, e.message ?: "write failed")
@@ -215,11 +231,46 @@ class PhotoCompressor(
             io.overwrite(uriString, bytes)
             releaseBackup(uriString, backup)
             CompressionOutcome.Failed(uriString, reason, restored = true)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // The backup stays on disk and the journal row stays put, so the next
             // launch tries again. This is the one path that must NOT clean up.
             Log.e(TAG, "Could not restore $uriString from ${backup.absolutePath}", e)
             CompressionOutcome.Failed(uriString, "restore failed: ${e.message}", restored = false)
+        }
+    }
+
+    /**
+     * One-shot cleanup of [backupDir]: deletes any `*.bak` file not referenced
+     * by a row in [liveRows]. Nothing else ever enumerates this directory, so
+     * without this a backup can leak permanently -- e.g. a `backup.delete()`
+     * call whose boolean result is ignored, or a re-compression of the same
+     * URI whose `OnConflictStrategy.REPLACE` journal insert overwrites the row
+     * that used to point at an older backup.
+     *
+     * [liveRows] must come from the SAME `journalDao.getAll()` call the caller
+     * uses to decide what needs recovering -- sweeping against a stale
+     * snapshot could delete a backup a just-inserted row now depends on. This
+     * is why the sweep takes the already-read rows as a parameter rather than
+     * querying again itself: "after the rows are read" is a caller-enforced
+     * ordering, not something this method can guarantee on its own.
+     *
+     * Deliberately safe to call unconditionally, whether or not there is
+     * anything to recover: unlike [recover] itself, this only ever touches
+     * this app's own private storage, never a MediaStore URI, so it needs no
+     * write grant and nothing here can destroy a user's photo.
+     */
+    suspend fun sweepOrphanedBackups(liveRows: List<CompressionJournalEntity>) {
+        withContext(Dispatchers.IO) {
+            val livePaths = liveRows.map { File(it.backupPath).absolutePath }.toSet()
+            val files = backupDir.listFiles() ?: return@withContext
+            for (file in files) {
+                if (!file.isFile || !file.name.endsWith(".bak")) continue
+                if (file.absolutePath in livePaths) continue
+                Log.w(TAG, "Deleting orphaned compression backup: ${file.name}")
+                file.delete()
+            }
         }
     }
 

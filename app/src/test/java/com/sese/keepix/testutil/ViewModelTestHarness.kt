@@ -5,6 +5,7 @@ import com.sese.keepix.data.KeepixPreferences
 import com.sese.keepix.data.MediaItem
 import com.sese.keepix.data.MediaRepository
 import com.sese.keepix.db.BinItemDao
+import com.sese.keepix.db.CompressionJournalDao
 import com.sese.keepix.db.KeptItemDao
 import com.sese.keepix.ui.KeepixViewModel
 import com.sese.keepix.utils.PhotoCompressor
@@ -115,16 +116,20 @@ object ViewModelTestHarness {
         binItemDao: BinItemDao = mockk(relaxed = true),
         keptItemDao: KeptItemDao = mockk(relaxed = true),
         prefs: KeepixPreferences = fakePrefs(),
-        photoCompressor: PhotoCompressor = mockk(relaxed = true)
+        photoCompressor: PhotoCompressor = mockk(relaxed = true),
+        compressionJournalDao: CompressionJournalDao = mockk(relaxed = true)
     ): KeepixViewModel {
         val vm = allocate()
         setField(vm, "repository", repository)
         setField(vm, "binItemDao", binItemDao)
         setField(vm, "keptItemDao", keptItemDao)
         setField(vm, "prefs", prefs)
+        setField(vm, "compressionJournalDao", compressionJournalDao)
         setField(vm, "_mediaItems", MutableStateFlow<List<MediaItem>>(emptyList()))
         setField(vm, "_isLoading", MutableStateFlow(false))
-        setField(vm, "_error", MutableStateFlow<String?>(null))
+        val error = MutableStateFlow<String?>(null)
+        setField(vm, "_error", error)
+        setField(vm, "error", error.asStateFlow())
         setField(vm, "_deletedCount", MutableStateFlow(0))
         setField(vm, "_sessionKeptCount", MutableStateFlow(0))
         setField(vm, "_promptedThisSession", MutableStateFlow(false))

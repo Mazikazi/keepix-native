@@ -41,6 +41,27 @@ private const val TAG = "KeepixViewModel"
  */
 const val MAX_COMPRESSION_BATCH = 50
 
+/**
+ * (photos this run would actually touch, bytes those specific files are
+ * estimated to reclaim) for [estimate] -- what SettingsScreen's card and
+ * confirmation dialog must promise, since [KeepixViewModel.requestCompression]
+ * only ever takes the first [MAX_COMPRESSION_BATCH] of [ReclaimEstimate.eligibleUris].
+ *
+ * Important 3: the estimate's own [ReclaimEstimate.eligibleCount] and
+ * [ReclaimEstimate.estimatedBytes] describe the whole library a scan found,
+ * not what a single tap of Optimize will do. Showing those uncapped figures
+ * next to a button that runs a capped batch is a promise the app does not
+ * keep. [ReclaimEstimate.eligibleBytesSaved] is parallel to [eligibleUris] in
+ * scan order, so summing its first N entries gives the real total for the N
+ * files [requestCompression] will actually pass to the compressor -- not a
+ * proportional guess.
+ */
+fun plannedCompressionBatch(estimate: ReclaimEstimate): Pair<Int, Long> {
+    val count = minOf(estimate.eligibleCount, MAX_COMPRESSION_BATCH)
+    val bytes = estimate.eligibleBytesSaved.take(count).sum()
+    return count to bytes
+}
+
 class KeepixViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = MediaRepository(application)
@@ -812,6 +833,16 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 val rows = compressionJournalDao.getAll()
+
+                // Runs every launch, independent of whether there is anything
+                // to recover below: sweeping needs no write grant (it only
+                // touches this app's own backup directory, never a MediaStore
+                // URI), so there's no reason to gate it behind the recovery
+                // flow the way the restore itself must be. Must happen with
+                // THESE rows -- the ones just read -- so a backup a live row
+                // points at is never mistaken for an orphan.
+                photoCompressor.sweepOrphanedBackups(rows)
+
                 if (rows.isEmpty()) return@launch
                 Log.w(TAG, "Found ${rows.size} interrupted rewrite(s); arming recovery")
                 _pendingWrite.value = PendingWriteRequest(
@@ -886,7 +917,15 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         // one is outstanding is silently dropped by Android, and the loser's work
         // would then wait forever behind a latched guard -- the exact shape that
         // caused three defects in the earlier correctness pass.
-        if (_pendingWrite.value != null) return
+        if (_pendingWrite.value != null) {
+            // Without this, tapping Optimize while a request is already
+            // outstanding (a recovery still waiting on its grant, or a
+            // compression run still mid-batch) does nothing visible at all --
+            // the tap is silently swallowed by the guard above.
+            _compressionStatus.value =
+                "Keepix is still finishing a previous optimization. Try again in a moment."
+            return
+        }
 
         val uris = _compressionEstimate.value?.eligibleUris.orEmpty().take(MAX_COMPRESSION_BATCH)
         if (uris.isEmpty()) return
@@ -913,10 +952,51 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                 when (request.kind) {
                     WriteRequestKind.RECOVERY -> {
                         val outcomes = photoCompressor.recover()
-                        val restored = outcomes.count { it is CompressionOutcome.Failed && it.restored }
+                        val failures = outcomes.filterIsInstance<CompressionOutcome.Failed>()
+                        val restored = failures.count { it.restored }
                         if (restored > 0) {
                             _compressionStatus.value =
                                 "Restored $restored photo${if (restored == 1) "" else "s"} after an interrupted optimization."
+                        }
+
+                        // Failed(restored = false) is the case that used to be
+                        // completely silent (Important 4): recover() could not
+                        // put an interrupted write's original back. Two very
+                        // different reasons land here (see PhotoCompressor.recover's
+                        // doc) and they need very different tones, so they are
+                        // split rather than lumped into one count:
+                        //  - "backup missing" almost always means the write had
+                        //    already succeeded and only the journal row survived
+                        //    the crash -- releaseBackup() deletes the backup
+                        //    before the row, so a process death between those two
+                        //    deletes leaves exactly this shape for a photo that is
+                        //    in fact fine. Worded as a reassurance, not an alarm.
+                        //  - anything else means restore() itself threw with the
+                        //    backup still present -- a write denial, a provider
+                        //    error, a full disk -- and the photo may genuinely be
+                        //    left in a bad state. Worded accordingly.
+                        // Both go through _error, not _compressionStatus: the
+                        // latter only renders inside the Settings STORAGE card and
+                        // is nulled at the top of every scanForReclaimableSpace()
+                        // call, so a message left there is easy to never see.
+                        val backupMissing = failures.count { !it.restored && it.reason == "backup missing" }
+                        val restoreFailed = failures.size - restored - backupMissing
+                        val errorParts = mutableListOf<String>()
+                        if (restoreFailed > 0) {
+                            errorParts += "Keepix could not restore $restoreFailed " +
+                                "photo${if (restoreFailed == 1) "" else "s"} after an " +
+                                "interrupted optimization. Please check " +
+                                "${if (restoreFailed == 1) "it" else "them"} in your gallery app."
+                        }
+                        if (backupMissing > 0) {
+                            errorParts += "Keepix found $backupMissing interrupted " +
+                                "optimization record${if (backupMissing == 1) "" else "s"} " +
+                                "with no backup left to check against -- " +
+                                "${if (backupMissing == 1) "that photo was" else "those photos were"} " +
+                                "most likely already optimized successfully."
+                        }
+                        if (errorParts.isNotEmpty()) {
+                            _error.value = errorParts.joinToString(" ")
                         }
                     }
                     WriteRequestKind.COMPRESSION -> {

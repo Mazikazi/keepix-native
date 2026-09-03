@@ -370,4 +370,56 @@ class PhotoCompressorTest {
         assertTrue("an unrecoverable row must not be retried every launch", dao.rows.isEmpty())
     }
 
+    // --- sweepOrphanedBackups (Minor 1) ---------------------------------
+
+    @Test
+    fun sweepOrphanedBackups_deletesABakFileNoLiveRowPointsAt() = runTest {
+        val backupDir = temp.newFolder("sweep1")
+        val orphan = java.io.File(backupDir, "orphan.bak").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val compressor = PhotoCompressor(FakeMediaFileIo(emptyMap()), FakeJournalDao(), backupDir)
+
+        compressor.sweepOrphanedBackups(emptyList())
+
+        assertFalse("an orphaned backup with no journal row must be deleted", orphan.exists())
+    }
+
+    @Test
+    fun sweepOrphanedBackups_neverDeletesABackupALiveRowPointsAt() = runTest {
+        val backupDir = temp.newFolder("sweep2")
+        val live = java.io.File(backupDir, "live.bak").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val compressor = PhotoCompressor(FakeMediaFileIo(emptyMap()), FakeJournalDao(), backupDir)
+        val liveRow = CompressionJournalEntity(uri, live.absolutePath, 3L, 1L)
+
+        compressor.sweepOrphanedBackups(listOf(liveRow))
+
+        assertTrue("a backup a live journal row points at must survive the sweep", live.exists())
+    }
+
+    @Test
+    fun sweepOrphanedBackups_leavesNonBakFilesAndSubdirectoriesAlone() = runTest {
+        val backupDir = temp.newFolder("sweep3")
+        val unrelated = java.io.File(backupDir, "not-a-backup.txt").apply { writeBytes(byteArrayOf(9)) }
+        val nestedDir = java.io.File(backupDir, "nested").apply { mkdirs() }
+        val compressor = PhotoCompressor(FakeMediaFileIo(emptyMap()), FakeJournalDao(), backupDir)
+
+        compressor.sweepOrphanedBackups(emptyList())
+
+        assertTrue("only *.bak files are this sweep's concern", unrelated.exists())
+        assertTrue("a directory must never be treated as an orphaned backup", nestedDir.exists())
+    }
+
+    @Test
+    fun sweepOrphanedBackups_mixOfLiveAndOrphaned_deletesOnlyTheOrphan() = runTest {
+        val backupDir = temp.newFolder("sweep4")
+        val live = java.io.File(backupDir, "live.bak").apply { writeBytes(byteArrayOf(1)) }
+        val orphan = java.io.File(backupDir, "orphan.bak").apply { writeBytes(byteArrayOf(2)) }
+        val compressor = PhotoCompressor(FakeMediaFileIo(emptyMap()), FakeJournalDao(), backupDir)
+        val liveRow = CompressionJournalEntity(uri, live.absolutePath, 1L, 1L)
+
+        compressor.sweepOrphanedBackups(listOf(liveRow))
+
+        assertTrue(live.exists())
+        assertFalse(orphan.exists())
+    }
+
 }

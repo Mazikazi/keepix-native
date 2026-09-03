@@ -1,5 +1,7 @@
 package com.sese.keepix.ui
 
+import com.sese.keepix.db.CompressionJournalDao
+import com.sese.keepix.db.CompressionJournalEntity
 import com.sese.keepix.testutil.ViewModelTestHarness
 import com.sese.keepix.utils.CompressionOutcome
 import com.sese.keepix.utils.PhotoCompressor
@@ -16,8 +18,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -254,5 +258,149 @@ class CompressionStateMachineTest {
 
         vm.onWriteGranted()
         coVerify(exactly = MAX_COMPRESSION_BATCH) { compressor.compress(any()) }
+    }
+
+    // --- Important 4: a failed recovery must not be silent ------------------
+
+    @Test
+    fun onWriteGranted_recoveryKind_realRestoreFailure_surfacesAnAlarmingError() = runTest {
+        // restore() itself threw with the backup still present -- the photo
+        // may genuinely be left in a bad state.
+        coEvery { compressor.recover() } returns listOf(
+            CompressionOutcome.Failed("uri://x", "restore failed: write denied", restored = false)
+        )
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
+            vm, "_pendingWrite"
+        ).value = KeepixViewModel.PendingWriteRequest(KeepixViewModel.WriteRequestKind.RECOVERY, listOf("uri://x"))
+
+        vm.onWriteGranted()
+
+        val error = vm.error.value
+        assertNotNull("a genuine restore failure must not be silent", error)
+        assertTrue(
+            "the message must say something could not be restored: $error",
+            error!!.contains("could not restore", ignoreCase = true)
+        )
+    }
+
+    @Test
+    fun onWriteGranted_recoveryKind_backupMissing_surfacesANonAlarmingMessage() = runTest {
+        // Deliberate benign case (see PhotoCompressor.recover's doc): a process
+        // death between releaseBackup()'s two deletes leaves a journal row with
+        // no backup for a photo that was in fact already compressed correctly.
+        coEvery { compressor.recover() } returns listOf(
+            CompressionOutcome.Failed("uri://x", "backup missing", restored = false)
+        )
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
+            vm, "_pendingWrite"
+        ).value = KeepixViewModel.PendingWriteRequest(KeepixViewModel.WriteRequestKind.RECOVERY, listOf("uri://x"))
+
+        vm.onWriteGranted()
+
+        val error = vm.error.value
+        assertNotNull("this must still be surfaced, not silent", error)
+        assertTrue(
+            "must not sound alarming for the benign case: $error",
+            error!!.contains("already optimized", ignoreCase = true)
+        )
+        assertFalse(
+            "must not use damaged/alarming language for the benign case: $error",
+            error.contains("damaged", ignoreCase = true) || error.contains("could not restore", ignoreCase = true)
+        )
+    }
+
+    @Test
+    fun onWriteGranted_recoveryKind_mixedOutcomes_setsBothStatusAndErrorWithoutClobbering() = runTest {
+        coEvery { compressor.recover() } returns listOf(
+            CompressionOutcome.Failed("uri://a", "recovered an interrupted write", restored = true),
+            CompressionOutcome.Failed("uri://b", "backup missing", restored = false),
+            CompressionOutcome.Failed("uri://c", "restore failed: disk full", restored = false)
+        )
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
+            vm, "_pendingWrite"
+        ).value = KeepixViewModel.PendingWriteRequest(
+            KeepixViewModel.WriteRequestKind.RECOVERY, listOf("uri://a", "uri://b", "uri://c")
+        )
+
+        vm.onWriteGranted()
+
+        assertEquals(
+            "Restored 1 photo after an interrupted optimization.",
+            vm.compressionStatus.value
+        )
+        val error = vm.error.value
+        assertNotNull("both failure kinds must appear, not just the last one set", error)
+        assertTrue(error!!.contains("already optimized", ignoreCase = true))
+        assertTrue(error.contains("could not restore", ignoreCase = true))
+    }
+
+    @Test
+    fun onWriteGranted_recoveryKind_allRestoredSuccessfully_leavesErrorUntouched() = runTest {
+        coEvery { compressor.recover() } returns
+            listOf(CompressionOutcome.Failed("uri://x", "recovered an interrupted write", restored = true))
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
+            vm, "_pendingWrite"
+        ).value = KeepixViewModel.PendingWriteRequest(KeepixViewModel.WriteRequestKind.RECOVERY, listOf("uri://x"))
+
+        vm.onWriteGranted()
+
+        assertNull("a clean recovery must not raise any error", vm.error.value)
+    }
+
+    // --- Minor 3: requestCompression() must not silently no-op --------------
+
+    @Test
+    fun requestCompression_whileAWriteIsAlreadyPending_setsAStatusMessageInsteadOfNoOp() = runTest {
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
+            vm, "_pendingWrite"
+        ).value = KeepixViewModel.PendingWriteRequest(KeepixViewModel.WriteRequestKind.RECOVERY, listOf("uri://x"))
+        ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<ReclaimEstimate?>>(
+            vm, "_compressionEstimate"
+        ).value = estimate("uri://a")
+
+        vm.requestCompression()
+
+        assertNotNull(
+            "the user's tap must not be silently swallowed",
+            vm.compressionStatus.value
+        )
+    }
+
+    // --- Minor 1: the orphan backup sweep runs at recovery time --------------
+
+    @Test
+    fun checkForInterruptedCompressions_sweepsOrphanedBackupsEvenWhenNothingNeedsRecovering() = runTest {
+        val dao = mockk<CompressionJournalDao>()
+        coEvery { dao.getAll() } returns emptyList()
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor, compressionJournalDao = dao)
+
+        vm.checkForInterruptedCompressions()
+
+        // The sweep needs no write grant -- it only touches this app's own
+        // backup directory -- so it must run even when there is no
+        // interrupted write to recover, unlike the recovery request itself.
+        coVerify(exactly = 1) { compressor.sweepOrphanedBackups(emptyList()) }
+        assertNull("nothing to recover means nothing should be armed", vm.pendingWrite.value)
+    }
+
+    @Test
+    fun checkForInterruptedCompressions_sweepsWithTheExactRowsUsedToArmRecovery() = runTest {
+        val rows = listOf(CompressionJournalEntity("uri://x", "/tmp/x.bak", 1L, 1L))
+        val dao = mockk<CompressionJournalDao>()
+        coEvery { dao.getAll() } returns rows
+        val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor, compressionJournalDao = dao)
+
+        vm.checkForInterruptedCompressions()
+
+        // Must sweep against the SAME rows used to decide what needs
+        // recovering, not a fresh (potentially different) read -- sweeping
+        // against a stale snapshot could delete a backup a live row depends on.
+        coVerify(exactly = 1) { compressor.sweepOrphanedBackups(rows) }
+        assertEquals(KeepixViewModel.WriteRequestKind.RECOVERY, vm.pendingWrite.value?.kind)
     }
 }

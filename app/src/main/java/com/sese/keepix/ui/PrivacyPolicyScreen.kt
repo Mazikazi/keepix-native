@@ -66,7 +66,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Effective Date: 2026-07-09  •  Version 1.2",
+                text = "Effective Date: 2026-07-09  •  Last Updated: 2026-09-04  •  Version 1.3",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextMuted
             )
@@ -133,8 +133,13 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                         "the date, orientation, location and colour profile. Android " +
                         "shows you a confirmation dialog first, and nothing is written " +
                         "unless you confirm. Keepix keeps its own copy of the original " +
-                        "until it has read the result back and checked it, and restores " +
-                        "the original if anything goes wrong."
+                        "in app-private storage until it has read the result back and " +
+                        "checked it, and restores the original if anything goes wrong. " +
+                        "That copy is deleted as soon as the result is verified. Photos " +
+                        "that carry an HDR gain map or a motion-photo video alongside " +
+                        "the picture are detected first and left untouched — Keepix " +
+                        "only ever removes a plain duplicate copy, never part of the " +
+                        "photo itself."
                 )
             }
 

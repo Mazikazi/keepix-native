@@ -32,12 +32,20 @@ private const val MAX_HEADER_BYTES = 1024 * 1024
  * @param estimatedBytes total reclaimable bytes across [eligibleUris]. An
  *   estimate, derived from each file's MPF index rather than a full walk.
  * @param eligibleUris the URIs a compression run would target, in scan order.
+ * @param eligibleBytesSaved parallel to [eligibleUris] -- entry i is the
+ *   estimated saving for `eligibleUris[i]`. A single compression run only ever
+ *   takes the first `MAX_COMPRESSION_BATCH` of [eligibleUris] (see
+ *   `KeepixViewModel.requestCompression`), so summing the first N of this list
+ *   gives the real byte total for what that run will actually touch, not a
+ *   proportional guess against the whole-library [estimatedBytes]. Defaults to
+ *   empty for callers that only care about the whole-library totals.
  */
 data class ReclaimEstimate(
     val scannedCount: Int,
     val eligibleCount: Int,
     val estimatedBytes: Long,
-    val eligibleUris: List<String>
+    val eligibleUris: List<String>,
+    val eligibleBytesSaved: List<Long> = emptyList()
 )
 
 /**
@@ -61,6 +69,7 @@ class PhotoCompressionAnalyzer(private val context: Context) {
         var scanned = 0
         var total = 0L
         val eligible = mutableListOf<String>()
+        val eligibleBytes = mutableListOf<Long>()
 
         for (item in photos) {
             // Cooperative cancellation: the user can leave Settings mid-scan.
@@ -90,12 +99,13 @@ class PhotoCompressionAnalyzer(private val context: Context) {
                     if (JpegRewriter.meetsSavingFloor(plan, fileSize.toInt())) {
                         total += bytesSaved
                         eligible += item.mediaUri
+                        eligibleBytes += bytesSaved
                     }
                 }
             }
         }
 
-        ReclaimEstimate(scanned, eligible.size, total, eligible)
+        ReclaimEstimate(scanned, eligible.size, total, eligible, eligibleBytes)
     }
 
     /** Returns (fileSize, estimatedSavings) or null if the file is not usable. */

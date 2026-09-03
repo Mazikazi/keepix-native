@@ -1,8 +1,8 @@
 # Keepix Privacy Policy
 
 **Effective Date:** 2026-07-09  
-**Last Updated:** 2026-09-03  
-**Version:** 1.2
+**Last Updated:** 2026-09-04  
+**Version:** 1.3
 
 ---
 
@@ -53,7 +53,7 @@ Keepix uses a local Room (SQLite) database and a SharedPreferences file. Tables:
 
 When you favorite an item, Keepix asks Android to set that photo or video's system favorite flag, so the star also appears in your gallery app. Android shows you a confirmation dialog first, and nothing is written unless you confirm. This changes only that flag — no file contents are read, copied or modified.
 
-Optimizing a photo rewrites that file on your device to remove redundant data some cameras embed alongside the picture — a duplicate second copy of the shot. The image itself is not altered: every pixel is copied across untouched, along with the date, orientation, location and colour profile. Android shows you a confirmation dialog first, and nothing is written unless you confirm. Keepix keeps its own copy of the original in app-private storage until it has read the result back and checked it, and restores the original if anything goes wrong. That copy is deleted as soon as the result is verified.
+Optimizing a photo rewrites that file on your device to remove redundant data some cameras embed alongside the picture — a duplicate second copy of the shot. The image itself is not altered: every pixel is copied across untouched, along with the date, orientation, location and colour profile. Android shows you a confirmation dialog first, and nothing is written unless you confirm. Keepix keeps its own copy of the original in app-private storage until it has read the result back and checked it, and restores the original if anything goes wrong. That copy is deleted as soon as the result is verified. Photos that carry an HDR gain map or a motion-photo video alongside the picture are detected first and left untouched — Keepix only ever removes a plain duplicate copy, never part of the photo itself.
 
 ---
 

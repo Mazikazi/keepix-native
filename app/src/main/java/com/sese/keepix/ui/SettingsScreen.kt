@@ -321,6 +321,17 @@ fun SettingsScreen(
                             }
 
                             else -> {
+                                // Important 3: eligibleCount/estimatedBytes describe
+                                // the whole library a scan found, but a single tap
+                                // of Optimize only ever rewrites the first
+                                // MAX_COMPRESSION_BATCH of them (requestCompression
+                                // caps the batch on purpose -- see its doc). Showing
+                                // only the uncapped figures here is a promise the
+                                // run does not keep, so a capped run also shows what
+                                // THIS tap will actually do.
+                                val (plannedCount, plannedBytes) = plannedCompressionBatch(reclaimEstimate)
+                                val isCapped = reclaimEstimate.eligibleCount > MAX_COMPRESSION_BATCH
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -348,6 +359,16 @@ fun SettingsScreen(
                                     color = TextMuted,
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                                if (isCapped) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "This run will optimize $plannedCount of them " +
+                                            "(about ${formatMegabytes(plannedBytes)}). " +
+                                            "Run Optimize again afterward to keep going.",
+                                        color = TextMuted,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(16.dp))
                                 com.sese.keepix.ui.components.GlassButton(
                                     onClick = { showOptimizeConfirmation = true },
@@ -448,10 +469,21 @@ fun SettingsScreen(
             containerColor = DarkSurface,
             title = { Text("Optimize photos?", color = TextPrimary) },
             text = {
+                val eligibleCount = reclaimEstimate?.eligibleCount ?: 0
+                val plannedCount = minOf(eligibleCount, MAX_COMPRESSION_BATCH)
+                // Important 3: this dialog must promise exactly what this tap
+                // will do, not the whole library a scan found -- requestCompression
+                // only ever takes the first MAX_COMPRESSION_BATCH eligible files.
+                val opening = if (eligibleCount > MAX_COMPRESSION_BATCH) {
+                    "Keepix will rewrite $plannedCount of your $eligibleCount " +
+                        "eligible photos on your device this run. Run Optimize " +
+                        "again afterward to continue with the rest."
+                } else {
+                    "Keepix will rewrite $plannedCount " +
+                        "photo${if (plannedCount == 1) "" else "s"} on your device."
+                }
                 Text(
-                    "Keepix will rewrite ${reclaimEstimate?.eligibleCount ?: 0} " +
-                        "photo${if (reclaimEstimate?.eligibleCount == 1) "" else "s"} on " +
-                        "your device to remove the duplicate copy stored inside each " +
+                    "$opening This removes the duplicate copy stored inside each " +
                         "file. The picture itself does not change — every pixel, and " +
                         "the date, location and orientation, are kept exactly as they " +
                         "are.\n\nAndroid will ask you to confirm. Keepix keeps a copy " +
