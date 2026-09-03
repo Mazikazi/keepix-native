@@ -14,6 +14,7 @@ import com.sese.keepix.utils.jpeg.JpegParser
 import io.mockk.mockk
 import java.io.ByteArrayInputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -78,12 +79,22 @@ class ReclaimEstimateTest {
      * so the genuine EOF contract (read() returning -1, not a mocked answer) is
      * what the loop has to react to. The file is sized to cross one
      * HEADER_CHUNK_BYTES (64 KB) boundary, so the buffer-growth branch runs at
-     * least once before EOF is hit, exercising both concerns at once: growing
-     * the buffer must not drop the bytes already read (parseHeader is handed
-     * `buffer` and `filled` again, not just the newly-read tail), and running out
-     * of input must return null (skip) rather than loop forever.
+     * least once before EOF is hit.
+     *
+     * This proves termination and the EOF-skip path only -- NOT that growth
+     * preserves the already-read bytes. A prior version of this docstring
+     * claimed the latter too, but `assertNull` can't tell the two apart: a
+     * mutation that drops the already-read prefix on growth (replacing
+     * `buffer.copyOf(...)` with a fresh, zeroed `ByteArray(...)`) still returns
+     * null here, just for an unrelated reason (a zeroed buffer no longer starts
+     * with the SOI marker, so `parseHeader` reports `Malformed` instead of
+     * `NeedMoreBytes` -- same null result as genuine EOF). Buffer-growth
+     * correctness is covered separately, by
+     * `readHeader_headerSpansMultipleChunks_growsTheBufferAndParsesTheFullChain`
+     * below, which asserts on the actual parsed segment content of a header
+     * that only comes out right if the already-read bytes survived the resize.
      */
-    @Test
+    @Test(timeout = 10_000)
     fun readHeader_headerNeverCompletesEvenAfterTheWholeFileIsRead_terminatesAndSkips() {
         val declaredLength = 0xFFFF // max 16-bit length; segment "needs" 4 + 0xFFFF bytes total.
         val header = byteArrayOf(
@@ -105,5 +116,116 @@ class ReclaimEstimateTest {
         val result = analyzer.readHeader(ByteArrayInputStream(bytes))
 
         assertNull(result)
+    }
+
+    /**
+     * Closes the gap the review found in the test above: that one only proves
+     * the loop terminates, never that growing the buffer preserves what was
+     * already read. Proven by mutation -- replacing `buffer.copyOf(...)` with a
+     * fresh, zeroed `ByteArray(...)` left the whole suite green, because a
+     * zeroed buffer fails at byte 0 (no longer starts with the SOI marker) the
+     * exact same way an exhausted stream does: both return null, and
+     * `assertNull` can't tell them apart.
+     *
+     * This builds a header that spans more than one HEADER_CHUNK_BYTES (64 KB)
+     * chunk -- two oversized filler APP1 segments push the marker chain past
+     * the boundary before SOF0, the MPF index segment, and SOS -- so
+     * [PhotoCompressionAnalyzer.readHeader] must grow its buffer at least once
+     * before it can reach [HeaderResult.Ok]. Unlike the null-returning tests,
+     * this one asserts on the actual parsed segments -- their markers,
+     * identifiers, and offsets. If growth ever dropped the already-read
+     * prefix, parsing would restart against a corrupted buffer and either fail
+     * outright (no leading SOI) or misreport the chain; only an assertion on
+     * the real parsed content, not mere non-nullness, catches that.
+     */
+    @Test
+    fun readHeader_headerSpansMultipleChunks_growsTheBufferAndParsesTheFullChain() {
+        val soiBytes = soi()
+        // Two oversized filler segments -- their exact content is irrelevant,
+        // only their combined size, chosen to land past one 64 KB chunk before
+        // the chain reaches SOS.
+        val filler1 = app(JpegMarkers.APP1, "Exif", ByteArray(40_000))
+        val filler2 = app(JpegMarkers.APP1, "Exif", ByteArray(30_000))
+        val mpfSegment = JpegFixtures.segment(JpegMarkers.APP2, JpegFixtures.mpfPayload(listOf(1_000_000L)))
+        val sofBytes = sof0()
+        val bytes = concat(soiBytes, filler1, filler2, mpfSegment, sofBytes, sos(byteArrayOf(1)), eoi())
+
+        val scanStartOffset = soiBytes.size + filler1.size + filler2.size + mpfSegment.size + sofBytes.size
+        check(scanStartOffset > 64 * 1024) {
+            "fixture must cross one HEADER_CHUNK_BYTES (64 KB) boundary before SOS"
+        }
+
+        val analyzer = PhotoCompressionAnalyzer(mockk<Context>())
+        val result = analyzer.readHeader(ByteArrayInputStream(bytes))
+
+        assertNotNull("expected a parsed header, not a null (EOF/malformed) result", result)
+        val header = result!!.first
+
+        assertEquals(scanStartOffset, header.scanStartOffset)
+        assertEquals(4, header.segments.size)
+
+        assertEquals(JpegMarkers.APP1, header.segments[0].marker)
+        assertEquals("Exif", header.segments[0].identifier)
+        assertEquals(soiBytes.size, header.segments[0].offset)
+        assertEquals(filler1.size, header.segments[0].length)
+
+        assertEquals(JpegMarkers.APP1, header.segments[1].marker)
+        assertEquals("Exif", header.segments[1].identifier)
+        assertEquals(soiBytes.size + filler1.size, header.segments[1].offset)
+        assertEquals(filler2.size, header.segments[1].length)
+
+        assertEquals(JpegMarkers.APP2, header.segments[2].marker)
+        assertEquals("MPF", header.segments[2].identifier)
+        assertEquals(soiBytes.size + filler1.size + filler2.size, header.segments[2].offset)
+        assertEquals(mpfSegment.size, header.segments[2].length)
+
+        assertEquals(0xC0, header.segments[3].marker)
+        assertEquals(
+            soiBytes.size + filler1.size + filler2.size + mpfSegment.size,
+            header.segments[3].offset
+        )
+        assertEquals(sofBytes.size, header.segments[3].length)
+    }
+
+    /**
+     * The reviewer hand-traced the MAX_HEADER_BYTES-cap branch as correct but
+     * nothing exercised it: a chain of well-formed segments that keeps
+     * demanding more bytes past the 1 MB cap must be skipped, and the buffer
+     * must stop growing there rather than continuing to read an arbitrarily
+     * large file.
+     *
+     * The fixture is a long run of identical, individually well-formed APP1
+     * filler segments with no SOS anywhere, so every call to
+     * [JpegParser.parseHeader] returns [HeaderResult.NeedMoreBytes] -- never
+     * [HeaderResult.Malformed] or [HeaderResult.Ok] -- all the way up through
+     * the doubling sequence 64 KB -> 128 KB -> 256 KB -> 512 KB -> 1 MB. The
+     * stream deliberately carries more than 1 MB of data (padding past the
+     * cap): if the loop kept growing/reading instead of stopping at the cap,
+     * it would consume more than 1 MB from the stream. Asserting on
+     * [ByteArrayInputStream.available] after the call proves exactly how many
+     * bytes were consumed -- the cap, not a byte more -- which is the
+     * buffer-growth ceiling actually being honoured, rather than the loop
+     * merely returning null for some other reason.
+     */
+    @Test(timeout = 10_000)
+    fun readHeader_headerNeverCompletesPastTheCap_stopsGrowingAtMaxHeaderBytesAndSkips() {
+        // MAX_HEADER_BYTES is private to PhotoCompressionAnalyzer; mirrored
+        // here as in the termination test above.
+        val maxHeaderBytes = 1024 * 1024
+        val filler = app(JpegMarkers.APP1, "Exif", ByteArray(1000))
+        val fillerCount = 1200 // 1200 * 1009 bytes > maxHeaderBytes, with room to spare as padding
+        val bytes = concat(soi(), *Array(fillerCount) { filler })
+        check(bytes.size > maxHeaderBytes) { "fixture must exceed MAX_HEADER_BYTES" }
+
+        val input = ByteArrayInputStream(bytes)
+        val analyzer = PhotoCompressionAnalyzer(mockk<Context>())
+
+        val result = analyzer.readHeader(input)
+
+        assertNull(result)
+        // Exactly MAX_HEADER_BYTES must have been consumed from the stream:
+        // the loop gave up at the cap rather than reading further into the
+        // padding that follows it.
+        assertEquals(bytes.size - maxHeaderBytes, input.available())
     }
 }
