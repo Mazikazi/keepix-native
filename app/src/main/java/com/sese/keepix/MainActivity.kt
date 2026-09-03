@@ -1044,12 +1044,22 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
 
         composable("settings") {
+            val reclaimEstimate by viewModel.compressionEstimate.collectAsState()
+            val scanProgress by viewModel.compressionScanProgress.collectAsState()
+            val compressionStatus by viewModel.compressionStatus.collectAsState()
+
             SettingsScreen(
                 currentRetentionDays = viewModel.prefs.retentionDays,
                 binCount = binCount,
                 onRetentionChanged = { days -> viewModel.prefs.retentionDays = days },
                 onEmptyBin = { viewModel.deleteBinItems(binItems) },
                 hasOnlyPartialMediaAccess = hasOnlyPartialAccess,
+                reclaimEstimate = reclaimEstimate,
+                scanProgress = scanProgress,
+                compressionStatus = compressionStatus,
+                onScanForReclaimableSpace = { viewModel.scanForReclaimableSpace() },
+                onCancelScan = { viewModel.cancelCompressionScan() },
+                onOptimize = { viewModel.requestCompression() },
                 onBack = { navController.popBackStack() }
             )
         }

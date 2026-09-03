@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import com.sese.keepix.BuildConfig
 import com.sese.keepix.ui.components.*
 import com.sese.keepix.ui.theme.*
+import com.sese.keepix.utils.ReclaimEstimate
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,10 +35,17 @@ fun SettingsScreen(
     // checkMediaPermission's doc in MainActivity.kt), but the swipe queue
     // will look incomplete unless the user understands why.
     hasOnlyPartialMediaAccess: Boolean = false,
+    reclaimEstimate: ReclaimEstimate? = null,
+    scanProgress: Pair<Int, Int>? = null,
+    compressionStatus: String? = null,
+    onScanForReclaimableSpace: () -> Unit = {},
+    onCancelScan: () -> Unit = {},
+    onOptimize: () -> Unit = {},
     onBack: () -> Unit
 ) {
     var sliderValue by remember { mutableFloatStateOf(currentRetentionDays.toFloat()) }
     var showEmptyConfirmation by remember { mutableStateOf(false) }
+    var showOptimizeConfirmation by remember { mutableStateOf(false) }
     var showPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
 
     if (showPrivacyPolicy) {
@@ -234,6 +242,137 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // STORAGE section
+                Text(
+                    text = "STORAGE",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = AccentPurple,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 16.dp
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            "Optimize photos",
+                            color = TextPrimary,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Some cameras save a second copy of every shot inside the " +
+                                "photo file. Removing it frees space without changing " +
+                                "the picture — every pixel is kept exactly as it is.",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        when {
+                            scanProgress != null -> {
+                                val (scanned, total) = scanProgress
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        if (total > 0) "Checking $scanned of $total…" else "Checking…",
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    TextButton(onClick = onCancelScan) {
+                                        Text("Cancel", color = TextMuted)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = {
+                                        if (total > 0) scanned.toFloat() / total else 0f
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = AccentPurple
+                                )
+                            }
+
+                            reclaimEstimate == null -> {
+                                com.sese.keepix.ui.components.GlassButton(
+                                    onClick = onScanForReclaimableSpace,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cornerRadius = 12.dp,
+                                    tintColor = AccentPurple,
+                                    tintAlpha = 0.2f
+                                ) {
+                                    Text("Check for reclaimable space")
+                                }
+                            }
+
+                            reclaimEstimate.eligibleCount == 0 -> {
+                                Text(
+                                    "Nothing to reclaim — checked ${reclaimEstimate.scannedCount} " +
+                                        "photo${if (reclaimEstimate.scannedCount == 1) "" else "s"}.",
+                                    color = TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+
+                            else -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "Reclaimable space",
+                                        color = TextPrimary,
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text(
+                                        // "About", because this is derived from each
+                                        // file's declared index rather than a full
+                                        // walk of every byte. The real figure is
+                                        // computed per file at write time.
+                                        "about ${reclaimEstimate.estimatedBytes / (1024 * 1024)} MB",
+                                        color = KeepGreen,
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "across ${reclaimEstimate.eligibleCount} " +
+                                        "photo${if (reclaimEstimate.eligibleCount == 1) "" else "s"}",
+                                    color = TextMuted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                com.sese.keepix.ui.components.GlassButton(
+                                    onClick = { showOptimizeConfirmation = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cornerRadius = 12.dp,
+                                    tintColor = KeepGreen,
+                                    tintAlpha = 0.2f
+                                ) {
+                                    Text("Optimize")
+                                }
+                            }
+                        }
+
+                        if (compressionStatus != null) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                compressionStatus,
+                                color = TextSecondary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
                 // ABOUT section
                 Text(
                     text = "ABOUT",
@@ -298,6 +437,40 @@ fun SettingsScreen(
                 }
             },
             containerColor = DarkSurface
+        )
+    }
+
+    // Optimize photos confirmation dialog
+    if (showOptimizeConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showOptimizeConfirmation = false },
+            containerColor = DarkSurface,
+            title = { Text("Optimize photos?", color = TextPrimary) },
+            text = {
+                Text(
+                    "Keepix will rewrite ${reclaimEstimate?.eligibleCount ?: 0} " +
+                        "photo${if (reclaimEstimate?.eligibleCount == 1) "" else "s"} on " +
+                        "your device to remove the duplicate copy stored inside each " +
+                        "file. The picture itself does not change — every pixel, and " +
+                        "the date, location and orientation, are kept exactly as they " +
+                        "are.\n\nAndroid will ask you to confirm. Keepix keeps a copy " +
+                        "of each original until it has checked the result.",
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showOptimizeConfirmation = false
+                    onOptimize()
+                }) {
+                    Text("Optimize", color = KeepGreen)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOptimizeConfirmation = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
         )
     }
 }
