@@ -5,6 +5,17 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Signing secrets never live in the tracked gradle.properties. Gradle merges
+// ~/.gradle/gradle.properties automatically, so putting them there (or passing
+// -PKEEPIX_... / env vars on CI) is picked up here with no further wiring.
+// See docs/keystore-generation.md.
+val releaseKeystoreFile = project.findProperty("KEEPIX_KEYSTORE_FILE") as String?
+val releaseKeystorePassword = project.findProperty("KEEPIX_KEYSTORE_PASSWORD") as String?
+val releaseKeyAlias = project.findProperty("KEEPIX_KEY_ALIAS") as String?
+val releaseKeyPassword = project.findProperty("KEEPIX_KEY_PASSWORD") as String?
+val hasReleaseSigning = releaseKeystoreFile != null && releaseKeystorePassword != null &&
+    releaseKeyAlias != null && releaseKeyPassword != null
+
 android {
     namespace = "com.sese.keepix"
     compileSdk = 35
@@ -20,24 +31,19 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val storeFile = project.findProperty("KEEPIX_KEYSTORE_FILE") as String?
-            val storePassword = project.findProperty("KEEPIX_KEYSTORE_PASSWORD") as String?
-            val keyAlias = project.findProperty("KEEPIX_KEY_ALIAS") as String?
-            val keyPassword = project.findProperty("KEEPIX_KEY_PASSWORD") as String?
-
-            if (storeFile == null || storePassword == null || keyAlias == null || keyPassword == null) {
-                throw GradleException(
-                    "Release signing properties missing. " +
-                    "Set KEEPIX_KEYSTORE_FILE, KEEPIX_KEYSTORE_PASSWORD, " +
-                    "KEEPIX_KEY_ALIAS, KEEPIX_KEY_PASSWORD in gradle.properties"
-                )
+        // Created only when all four properties are present. This block is
+        // evaluated while CONFIGURING the project -- for every task, including
+        // assembleDebug -- so throwing here made a missing keystore break debug
+        // builds and CI, not just release ones. The loud failure now lives in
+        // the taskGraph check at the bottom of this file, which fires only when
+        // a release artifact is actually requested.
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystoreFile!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
-
-            this.storeFile = file(storeFile)
-            this.storePassword = storePassword
-            this.keyAlias = keyAlias
-            this.keyPassword = keyPassword
         }
     }
 
@@ -45,7 +51,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -127,4 +133,21 @@ dependencies {
     androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+// Fail loudly on an unsigned release -- but at execution-planning time, so it
+// cannot break `assembleDebug`, `test`, or `lint` the way the old
+// configuration-time throw did.
+gradle.taskGraph.whenReady {
+    val wantsReleaseArtifact = allTasks.any {
+        it.name.startsWith("assembleRelease") || it.name.startsWith("bundleRelease")
+    }
+    if (wantsReleaseArtifact && !hasReleaseSigning) {
+        throw GradleException(
+            "Release signing properties missing. Set KEEPIX_KEYSTORE_FILE, " +
+            "KEEPIX_KEYSTORE_PASSWORD, KEEPIX_KEY_ALIAS and KEEPIX_KEY_PASSWORD in " +
+            "~/.gradle/gradle.properties (NOT the tracked gradle.properties) or pass " +
+            "them with -P. See docs/keystore-generation.md."
+        )
+    }
 }

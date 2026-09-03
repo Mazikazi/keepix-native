@@ -15,8 +15,12 @@
 local.properties
 
 # Secrets / keystore (never commit)
-**/gradle.properties
+# NOTE: gradle.properties is deliberately NOT ignored -- it carries non-secret
+# build settings (android.useAndroidX etc.) that the build requires. Signing
+# secrets belong in ~/.gradle/gradle.properties, outside this repo.
 **/keystores/
+*.jks
+*.keystore
 
 # Kotlin
 .kotlin/

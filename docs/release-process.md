@@ -19,7 +19,8 @@
 ## Signing
 
 - **Keystore:** `~/keystores/keepix-release.jks` (alias `keepix-release`, validity 25y)
-- **Secrets** in `gradle.properties` (gitignored):
+- **Secrets** in `~/.gradle/gradle.properties` (user-home, outside the repo — the
+  repo's own `gradle.properties` is tracked and must never hold them):
   - `KEEPIX_KEYSTORE_FILE`
   - `KEEPIX_KEYSTORE_PASSWORD`
   - `KEEPIX_KEY_ALIAS`
