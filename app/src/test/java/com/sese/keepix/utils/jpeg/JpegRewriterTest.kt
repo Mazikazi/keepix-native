@@ -10,6 +10,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -115,8 +116,19 @@ class JpegRewriterTest {
         assertFalse(JpegRewriter.meetsSavingFloor(plan(25 * 1024), 10 * 1024 * 1024))
         // 10 KB saved out of 100 KB is 10% -- fails the absolute floor.
         assertFalse(JpegRewriter.meetsSavingFloor(plan(10 * 1024), 100 * 1024))
-        // Exactly at each boundary: the spec says strictly greater.
-        assertFalse(JpegRewriter.meetsSavingFloor(plan(20 * 1024), 400 * 1024))
+        // Exactly at the absolute-byte boundary (20 KB saved), ratio comfortably
+        // clear at 50%: pins the byte comparison's strictness on its own -- this
+        // fails if (and only if) the byte check stops being strictly greater-than.
+        assertFalse(
+            JpegRewriter.meetsSavingFloor(
+                plan(JpegRewriter.MIN_SAVING_BYTES),
+                2 * JpegRewriter.MIN_SAVING_BYTES
+            )
+        )
+        // Exactly at the ratio boundary (5%), byte count comfortably clear at
+        // 100 KB saved: pins the ratio comparison's strictness on its own -- this
+        // fails if (and only if) the ratio check stops being strictly greater-than.
+        assertFalse(JpegRewriter.meetsSavingFloor(plan(100 * 1024), 20 * 100 * 1024))
         // 200 KB out of 3 MB clears both.
         assertTrue(JpegRewriter.meetsSavingFloor(plan(200 * 1024), 3 * 1024 * 1024))
     }
@@ -153,5 +165,44 @@ class JpegRewriterTest {
         val out = JpegRewriter.rewrite(bytes, s, plan)
         assertEquals(plan.outputSize, out.size)
         assertNotNull(JpegParser.parseFull(out))
+    }
+
+    @Test
+    fun rewrite_rejectsAPlanThatDropsAnOffsetAbsentFromTheStructure() {
+        // A stale plan built against a different (or since-changed) structure
+        // must be rejected loudly, not fed to the byte-copying loop below.
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val realPlan = JpegRewriter.planStrip(s)
+        val staleOffset = s.segments.last().offset + s.segments.last().length + 1
+        val stalePlan = realPlan.copy(droppedSegmentOffsets = setOf(staleOffset))
+
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            JpegRewriter.rewrite(bytes, s, stalePlan)
+        }
+        assertTrue(
+            "message should name the offending offset: ${ex.message}",
+            ex.message!!.contains(staleOffset.toString())
+        )
+    }
+
+    @Test
+    fun rewrite_rejectsATruncateAtThatDoesNotMatchThePrimaryEoi() {
+        // A truncateAt short of the real primary EOI would silently emit a
+        // truncated, corrupt JPEG (still >= cursor, so no ArrayIndexOutOfBounds)
+        // -- this is the dangerous mismatch a size-only check would miss.
+        val bytes = fileWithMpf()
+        val s = JpegParser.parseFull(bytes)!!
+        val realPlan = JpegRewriter.planStrip(s)
+        val shortPlan = realPlan.copy(truncateAt = realPlan.truncateAt - 10)
+
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            JpegRewriter.rewrite(bytes, s, shortPlan)
+        }
+        assertTrue(
+            "message should name both the mismatched value and the expected one: ${ex.message}",
+            ex.message!!.contains(shortPlan.truncateAt.toString()) &&
+                ex.message!!.contains(s.primaryEndOffset.toString())
+        )
     }
 }

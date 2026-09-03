@@ -75,6 +75,15 @@ object JpegRewriter {
      * is bit-identical in pixels because the pixel bytes ARE the input's bytes.
      */
     fun rewrite(bytes: ByteArray, structure: JpegStructure, plan: StripPlan): ByteArray {
+        val structureOffsets = structure.segments.map { it.offset }.toSet()
+        val unknownDropped = plan.droppedSegmentOffsets - structureOffsets
+        require(unknownDropped.isEmpty()) {
+            "plan drops offsets absent from structure.segments: $unknownDropped"
+        }
+        require(plan.truncateAt == structure.primaryEndOffset) {
+            "plan.truncateAt (${plan.truncateAt}) does not match " +
+                "structure.primaryEndOffset (${structure.primaryEndOffset})"
+        }
         require(plan.truncateAt <= bytes.size) { "truncateAt is past the end of the input" }
         val out = ByteArrayOutputStream(plan.outputSize)
         var cursor = 0
