@@ -34,6 +34,25 @@ sealed interface CompressionOutcome {
          */
         val restored: Boolean
     ) : CompressionOutcome
+
+    companion object {
+        /**
+         * [Failed.reason] used by [PhotoCompressor.recover] for the benign
+         * case documented there: a journal row survives with no backup file
+         * to restore from, almost always because the write had already
+         * succeeded and only `releaseBackup()`'s second delete was lost to a
+         * crash. A shared constant rather than a string literal each side
+         * retypes (Minor 4): [KeepixViewModel] matches on this exact string to
+         * decide whether a recovery failure is reassuring or alarming, so a
+         * silent drift between the producer and the matcher would silently
+         * reclassify every benign row as a genuine restore failure -- the
+         * "Keepix could not restore N photos ... check them in your gallery
+         * app" message, shown for photos that are in fact fine -- with every
+         * existing test (each retyping its own copy of the literal) still
+         * green.
+         */
+        const val REASON_BACKUP_MISSING: String = "backup missing"
+    }
 }
 
 /**
@@ -85,6 +104,22 @@ class PhotoCompressor(
         // structure alone cannot rule either out. This can, from the XMP the
         // primary image carries alongside it.
         if (AuxiliaryPayloadDetector.hasAuxiliaryPayloadMarker(structure.segments, original)) {
+            return CompressionOutcome.Skipped(uriString, "trailing payload may not be a discardable duplicate")
+        }
+
+        // The check above only ever looks at the PRIMARY image's APP1
+        // segments -- by design, since the analyser can only afford to read a
+        // header-sized prefix of the file. That leaves a real gap: Apple's
+        // "Most Compatible" HDR JPEG and an ISO 21496-1 gain map (Ultra HDR
+        // v1.1+) put none of those six markers on the primary at all. The
+        // gain map self-describes only in its OWN XMP, inside the bytes an
+        // MPF strip would discard -- exactly the region `original` holds in
+        // full here but the analyser never reads. This is why this check
+        // lives only here and not in PhotoCompressionAnalyzer: it is the
+        // authoritative, whole-file check the destructive path performs for
+        // itself, on top of (not instead of) the analyser's optimistic,
+        // header-only estimate.
+        if (AuxiliaryPayloadDetector.hasGainMapInTrailer(original, structure.primaryEndOffset, original.size)) {
             return CompressionOutcome.Skipped(uriString, "trailing payload may not be a discardable duplicate")
         }
 
@@ -217,7 +252,7 @@ class PhotoCompressor(
                 // ever succeed.
                 Log.w(TAG, "Journal row for ${row.mediaUri} has no backup file; dropping it")
                 journalDao.deleteByUri(row.mediaUri)
-                CompressionOutcome.Failed(row.mediaUri, "backup missing", restored = false)
+                CompressionOutcome.Failed(row.mediaUri, CompressionOutcome.REASON_BACKUP_MISSING, restored = false)
             } else {
                 restore(row.mediaUri, backup, "recovered an interrupted write")
             }

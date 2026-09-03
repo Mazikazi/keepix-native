@@ -290,7 +290,7 @@ class CompressionStateMachineTest {
         // death between releaseBackup()'s two deletes leaves a journal row with
         // no backup for a photo that was in fact already compressed correctly.
         coEvery { compressor.recover() } returns listOf(
-            CompressionOutcome.Failed("uri://x", "backup missing", restored = false)
+            CompressionOutcome.Failed("uri://x", CompressionOutcome.REASON_BACKUP_MISSING, restored = false)
         )
         val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)
         ViewModelTestHarness.getField<kotlinx.coroutines.flow.MutableStateFlow<KeepixViewModel.PendingWriteRequest?>>(
@@ -315,7 +315,7 @@ class CompressionStateMachineTest {
     fun onWriteGranted_recoveryKind_mixedOutcomes_setsBothStatusAndErrorWithoutClobbering() = runTest {
         coEvery { compressor.recover() } returns listOf(
             CompressionOutcome.Failed("uri://a", "recovered an interrupted write", restored = true),
-            CompressionOutcome.Failed("uri://b", "backup missing", restored = false),
+            CompressionOutcome.Failed("uri://b", CompressionOutcome.REASON_BACKUP_MISSING, restored = false),
             CompressionOutcome.Failed("uri://c", "restore failed: disk full", restored = false)
         )
         val vm = ViewModelTestHarness.newViewModel(photoCompressor = compressor)

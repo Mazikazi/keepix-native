@@ -831,25 +831,42 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun checkForInterruptedCompressions() {
         viewModelScope.launch {
-            try {
-                val rows = compressionJournalDao.getAll()
-
-                // Runs every launch, independent of whether there is anything
-                // to recover below: sweeping needs no write grant (it only
-                // touches this app's own backup directory, never a MediaStore
-                // URI), so there's no reason to gate it behind the recovery
-                // flow the way the restore itself must be. Must happen with
-                // THESE rows -- the ones just read -- so a backup a live row
-                // points at is never mistaken for an orphan.
-                photoCompressor.sweepOrphanedBackups(rows)
-
-                if (rows.isEmpty()) return@launch
-                Log.w(TAG, "Found ${rows.size} interrupted rewrite(s); arming recovery")
-                _pendingWrite.value = PendingWriteRequest(
-                    WriteRequestKind.RECOVERY, rows.map { it.mediaUri }
-                )
+            val rows = try {
+                compressionJournalDao.getAll()
             } catch (e: Exception) {
                 Log.e(TAG, "Could not read the compression journal", e)
+                return@launch
+            }
+
+            // Arming recovery is the safety-net half of this function, and it
+            // must not be able to fail just because the storage-cleanup half
+            // below did (Minor 3): the two used to share one try/catch, so an
+            // exception from sweepOrphanedBackups -- a storage nicety -- would
+            // skip arming recovery for the whole launch, leaving a genuinely
+            // mid-write photo unrestored. Arm first, in its own try/catch.
+            if (rows.isNotEmpty()) {
+                try {
+                    Log.w(TAG, "Found ${rows.size} interrupted rewrite(s); arming recovery")
+                    _pendingWrite.value = PendingWriteRequest(
+                        WriteRequestKind.RECOVERY, rows.map { it.mediaUri }
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Could not arm recovery for the compression journal", e)
+                }
+            }
+
+            // Runs every launch, independent of whether there was anything to
+            // recover above: sweeping needs no write grant (it only touches
+            // this app's own backup directory, never a MediaStore URI), so
+            // there's no reason to gate it behind the recovery flow the way
+            // the restore itself must be. Must happen with THESE rows -- the
+            // ones just read -- so a backup a live row points at is never
+            // mistaken for an orphan. In its own try/catch so a failure here
+            // can never prevent the recovery armed above.
+            try {
+                photoCompressor.sweepOrphanedBackups(rows)
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not sweep orphaned compression backups", e)
             }
         }
     }
@@ -979,7 +996,9 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                         // latter only renders inside the Settings STORAGE card and
                         // is nulled at the top of every scanForReclaimableSpace()
                         // call, so a message left there is easy to never see.
-                        val backupMissing = failures.count { !it.restored && it.reason == "backup missing" }
+                        val backupMissing = failures.count {
+                            !it.restored && it.reason == CompressionOutcome.REASON_BACKUP_MISSING
+                        }
                         val restoreFailed = failures.size - restored - backupMissing
                         val errorParts = mutableListOf<String>()
                         if (restoreFailed > 0) {

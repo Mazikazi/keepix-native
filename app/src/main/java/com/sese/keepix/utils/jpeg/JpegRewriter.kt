@@ -53,13 +53,26 @@ object JpegRewriter {
      * for either. This makes the zero-saving outcome self-justifying: callers no
      * longer need to trust a filter that lives in a different file (the
      * analyser) to keep a file like that out of the destructive path.
+     *
+     * The no-MPF plan below sets `truncateAt = structure.totalLength` --
+     * i.e. no truncation at all -- rather than `primaryEndOffset`, precisely so
+     * that "no truncation" is what the plan actually says whenever it also says
+     * `bytesSaved = 0`. Setting `truncateAt = primaryEndOffset` here instead
+     * would make the plan self-contradictory (it would claim zero bytes saved
+     * while its own `truncateAt` describes truncating away every trailing
+     * byte), and [rewrite]'s `truncateAt == primaryEndOffset` guard would let
+     * such a plan straight through: with an empty `droppedSegmentOffsets`, it
+     * would silently truncate a motion photo's appended video while reporting
+     * that nothing was saved. Anchoring `truncateAt` to `totalLength` instead
+     * turns that mistake into a loud [rewrite] `require` failure if such a plan
+     * is ever fed to it, rather than a silent, uncaught-by-any-check strip.
      */
     fun planStrip(structure: JpegStructure): StripPlan {
         val dropped = structure.segments.filter(::isMpf)
         if (dropped.isEmpty()) {
             return StripPlan(
                 droppedSegmentOffsets = emptySet(),
-                truncateAt = structure.primaryEndOffset,
+                truncateAt = structure.totalLength,
                 bytesSaved = 0,
                 outputSize = structure.totalLength
             )

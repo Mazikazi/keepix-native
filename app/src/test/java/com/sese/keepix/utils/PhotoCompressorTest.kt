@@ -222,6 +222,42 @@ class PhotoCompressorTest {
     }
 
     @Test
+    fun compress_appleStyleGainMapWithNoPrimaryMarker_skipsRatherThanStrippingTheGainMap() = runTest {
+        // Important 1: Apple's "Most Compatible" HDR JPEG (and an ISO
+        // 21496-1 gain map) carries NONE of the six AuxiliaryPayloadDetector
+        // markers on the PRIMARY image -- the gain map self-describes only in
+        // its own XMP, inside the trailing bytes an MPF strip would discard.
+        // Every check upstream of the trailer scan would pass this file:
+        // readable MPF index, agrees with the EOI walk, no marker on the
+        // primary. Only a scan of the trailing bytes themselves reveals the
+        // gain map.
+        val payload = JpegFixtures.mpfPayload(listOf(400_000L))
+        // Same footprint as the hdrgm-bearing APP1 in the sibling Ultra HDR
+        // test below, but carrying none of AuxiliaryPayloadDetector's six
+        // markers -- only filler bytes.
+        val markerFreeApp1 = app(JpegMarkers.APP1, "http://ns.adobe.com/xap/1.0/", ByteArray(72) { 'x'.code.toByte() })
+        val primary = concat(
+            soi(),
+            markerFreeApp1,
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(ByteArray(400_000 - 200) { (it % 251).toByte() }), eoi()
+        )
+        // The gain map JPEG self-describes only in ITS OWN APP1/XMP -- the
+        // primary above carries nothing of the sort.
+        val gainMapXmp = xmpApp1("xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\"")
+        val gainMap = concat(soi(), gainMapXmp, sof0(), sos(ByteArray(300_000) { 9 }), eoi())
+        val bytes = concat(primary, gainMap)
+        check(bytes.size >= 400_000) { "fixture must actually declare a plausible primary size" }
+
+        val io = FakeMediaFileIo(mapOf(uri to bytes))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals("must never open the file for write", 0, io.writeCount)
+        assertArrayEquals("the HDR file must be left byte-for-byte untouched", bytes, io.files[uri])
+    }
+
+    @Test
     fun compress_gContainerItemSemanticMarker_skips() = runTest {
         val payload = JpegFixtures.mpfPayload(listOf(400_000L))
         val primary = concat(

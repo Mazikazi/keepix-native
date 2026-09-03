@@ -130,6 +130,38 @@ class JpegRewriterTest {
     }
 
     @Test
+    fun planStrip_trailingBytesWithNoMpfSegment_truncateAtIsSelfConsistentWithZeroSavings() {
+        // Minor 2: the earlier version of this branch set truncateAt to
+        // primaryEndOffset while also claiming bytesSaved = 0 -- an internally
+        // contradictory plan (it describes discarding every trailing byte
+        // while claiming nothing was saved). meetsSavingFloor rejects
+        // bytesSaved = 0 today, so this plan never reaches rewrite() in
+        // production, but the safety property should not depend only on that
+        // composition. Anchoring truncateAt to totalLength makes the plan
+        // consistent on its own, AND makes rewrite()'s existing
+        // truncateAt-must-equal-primaryEndOffset guard catch this plan loudly
+        // if it were ever fed there directly, instead of silently truncating
+        // away a motion photo's video while reporting nothing was saved.
+        val primary = concat(soi(), app(JpegMarkers.APP1, "Exif", ByteArray(100)), sof0(), sos(scan), eoi())
+        val trailer = ByteArray(500_000) { 0x42 }
+        val bytes = concat(primary, trailer)
+        val s = JpegParser.parseFull(bytes)!!
+
+        val plan = JpegRewriter.planStrip(s)
+
+        assertEquals("truncateAt must describe an actual no-op, matching bytesSaved = 0", s.totalLength, plan.truncateAt)
+        assertEquals(bytes.size, plan.outputSize)
+
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            JpegRewriter.rewrite(bytes, s, plan)
+        }
+        assertTrue(
+            "rewrite() must refuse this plan loudly rather than truncate the trailer silently",
+            ex.message!!.contains(s.primaryEndOffset.toString())
+        )
+    }
+
+    @Test
     fun meetsSavingFloor_requiresBothAbsoluteAndRelativeGains() {
         fun plan(saved: Int) = StripPlan(emptySet(), 0, saved, 0)
 

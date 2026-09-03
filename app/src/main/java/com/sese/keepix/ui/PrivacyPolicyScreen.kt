@@ -135,11 +135,11 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                         "unless you confirm. Keepix keeps its own copy of the original " +
                         "in app-private storage until it has read the result back and " +
                         "checked it, and restores the original if anything goes wrong. " +
-                        "That copy is deleted as soon as the result is verified. Photos " +
-                        "that carry an HDR gain map or a motion-photo video alongside " +
-                        "the picture are detected first and left untouched — Keepix " +
-                        "only ever removes a plain duplicate copy, never part of the " +
-                        "photo itself."
+                        "That copy is deleted as soon as the result is verified. Before " +
+                        "removing anything, Keepix checks the file for known signs that " +
+                        "the trailing data is actually an HDR gain map or a motion-photo " +
+                        "video rather than a plain duplicate copy, and leaves the file " +
+                        "completely untouched whenever it finds one."
                 )
             }
 

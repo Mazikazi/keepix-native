@@ -50,7 +50,7 @@ pixels because the pixel bytes are copied verbatim.
 
 | Segment | Action | Reasoning |
 |---|---|---|
-| MPF secondary image (APP2, `MPF\0`), when confirmed to be a discardable duplicate | **Strip** | Often a dual-camera depth/secondary capture, hundreds of KB. But an MPF secondary is **not always a duplicate**: Google's Ultra HDR (Android 14+, the default JPEG output on Pixel 8+/Galaxy S24+ and much of the current fleet) and Apple's "Most Compatible" HDR JPEG store the **HDR gain map** the same way, and a Google/Samsung motion photo's video half can be appended after the primary EOI the same way too, sometimes alongside an MPF index and sometimes not. Both are part of the displayed result, not a duplicate of it. See §5.1. |
+| MPF secondary image (APP2, `MPF\0`), when no known auxiliary-payload or gain-map marker is found | **Strip** | Often a dual-camera depth/secondary capture, hundreds of KB. But an MPF secondary is **not always a duplicate**: Google's Ultra HDR (Android 14+, the default JPEG output on Pixel 8+/Galaxy S24+ and much of the current fleet) and Apple's "Most Compatible" HDR JPEG store the **HDR gain map** the same way, and a Google/Samsung motion photo's video half can be appended after the primary EOI the same way too, sometimes alongside an MPF index and sometimes not. Both are part of the displayed result, not a duplicate of it. See §5.1. |
 | EXIF thumbnail (APP1 → IFD1) | **Strip — phase 2** | Redundant preview, 10–20 KB, regenerable by any viewer. Requires TIFF-internal surgery; see §7. |
 | **ICC profile (APP2, `ICC_PROFILE\0`)** | **KEEP** | Removing it leaves pixels identical but renders a Display-P3 photo oversaturated in any color-managed viewer. Visibly wrong output — exactly the failure this design exists to avoid. |
 | XMP (APP1, Adobe ns) | **KEEP** | May carry edits, ratings, crop instructions. |
@@ -90,11 +90,33 @@ not rely on it alone. Before any MPF-based strip, both callers —
 (so an ineligible file is never counted or offered) and
 [`PhotoCompressor`](../../../app/src/main/java/com/sese/keepix/utils/PhotoCompressor.kt)
 (so one is never rewritten even if something else offered it) — consult
-[`AuxiliaryPayloadDetector`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/AuxiliaryPayloadDetector.kt):
-a fail-closed, header-only check that scans APP1 payload bytes for the marker
-strings above (plus the GContainer `Item:Semantic` property) and treats any
-hit as "not a discardable duplicate, do not strip." A plain dual-camera MPF
-file carrying none of these markers remains eligible. Separately,
+[`AuxiliaryPayloadDetector.hasAuxiliaryPayloadMarker`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/AuxiliaryPayloadDetector.kt):
+a header-only check that scans the PRIMARY image's APP1 payload bytes for the
+marker strings above (plus the GContainer `Item:Semantic` property) and treats
+any hit as "not a discardable duplicate, do not strip." This is fail-**open**,
+not fail-closed, with respect to any auxiliary format it has not been taught:
+it proves the ABSENCE of six known markers on the primary, never the presence
+of an actual discardable duplicate. It correctly protects Google's Ultra HDR
+v1.0 (whose format mandates the GContainer XMP on the primary) and both
+generations of Google/Samsung motion photos, but two real formats carry none
+of those six markers on the primary at all: Apple's "Most Compatible" HDR
+JPEG, and an ISO 21496-1 gain map (Ultra HDR v1.1 and newer, where the gain
+map is located via MPF and the primary need not carry the GContainer XMP). In
+both cases the gain map self-describes only in its OWN XMP, inside the
+trailing bytes a strip would discard — bytes the header-only analyser never
+reads.
+
+`PhotoCompressor` closes that gap with a second, authoritative check the
+analyser cannot perform, because it needs the whole file rather than a
+header-sized prefix:
+[`AuxiliaryPayloadDetector.hasGainMapInTrailer`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/AuxiliaryPayloadDetector.kt)
+scans the region after the primary EOI — exactly what an MPF strip would
+discard — for the gain map's own self-description (`hdrgm:` and the Adobe
+gain-map XMP namespace URI). A gain map always self-describes this way,
+whoever embedded it; a plain dual-camera secondary is an ordinary JPEG
+carrying neither string, so this does not risk over-blocking the common case.
+A plain dual-camera MPF file carrying none of these markers, on the primary or
+in the trailer, remains eligible. Separately,
 [`JpegRewriter.planStrip`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/JpegRewriter.kt)
 itself now requires an MPF segment to be present before it will offer any
 saving at all — trailing bytes alone, with no MPF index, can never justify a
