@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.sese.keepix.db.KeptItemEntity
+import com.sese.keepix.utils.jpeg.AuxiliaryPayloadDetector
 import com.sese.keepix.utils.jpeg.HeaderResult
 import com.sese.keepix.utils.jpeg.JpegHeader
 import com.sese.keepix.utils.jpeg.JpegMarkers
@@ -158,12 +159,20 @@ class PhotoCompressionAnalyzer(private val context: Context) {
          * the primary image (the MPF secondary), plus the index segment that
          * describes it.
          *
-         * Returns 0 whenever the index is absent, unreadable, or nonsensical.
-         * Under-reporting makes the feature look less useful than it is;
+         * Returns 0 whenever the index is absent, unreadable, or nonsensical, or
+         * whenever [AuxiliaryPayloadDetector] finds evidence that the trailing
+         * payload is something other than a discardable duplicate -- an Ultra
+         * HDR gain map or a motion-photo video are both stored the same way an
+         * MPF secondary is, and offering a saving for either would only get
+         * rejected later by [com.sese.keepix.utils.PhotoCompressor], after the
+         * user has already been shown a reclaimable-space figure that included
+         * it. Under-reporting makes the feature look less useful than it is;
          * over-reporting promises space that is not there. Zero is the honest
          * answer to "I could not tell".
          */
         fun estimateFromHeader(header: JpegHeader, bytes: ByteArray, fileSize: Long): Long {
+            if (AuxiliaryPayloadDetector.hasAuxiliaryPayloadMarker(header.segments, bytes)) return 0L
+
             val mpf = header.segments.firstOrNull {
                 it.marker == JpegMarkers.APP2 && it.identifier == "MPF"
             } ?: return 0L

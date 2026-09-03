@@ -3,6 +3,7 @@ package com.sese.keepix.utils
 import android.util.Log
 import com.sese.keepix.db.CompressionJournalDao
 import com.sese.keepix.db.CompressionJournalEntity
+import com.sese.keepix.utils.jpeg.AuxiliaryPayloadDetector
 import com.sese.keepix.utils.jpeg.JpegMarkers
 import com.sese.keepix.utils.jpeg.JpegParser
 import com.sese.keepix.utils.jpeg.JpegRewriter
@@ -72,6 +73,17 @@ class PhotoCompressor(
 
         val structure = JpegParser.parseFull(original)
             ?: return CompressionOutcome.Skipped(uriString, "not a parseable JPEG")
+
+        // Same predicate the analyser consults, checked again here rather than
+        // trusted from there: a file must never be rewritten on the strength of
+        // a filter that lives in a different file at a different layer. An
+        // Ultra HDR gain map or a motion-photo video is stored exactly like an
+        // MPF secondary -- concatenated after the primary EOI -- so the MPF
+        // structure alone cannot rule either out. This can, from the XMP the
+        // primary image carries alongside it.
+        if (AuxiliaryPayloadDetector.hasAuxiliaryPayloadMarker(structure.segments, original)) {
+            return CompressionOutcome.Skipped(uriString, "trailing payload may not be a discardable duplicate")
+        }
 
         val plan = JpegRewriter.planStrip(structure)
         if (!JpegRewriter.meetsSavingFloor(plan, original.size)) {

@@ -109,6 +109,27 @@ class JpegRewriterTest {
     }
 
     @Test
+    fun planStrip_trailingBytesWithNoMpfSegment_savesNothingDespiteTrailingBytes() {
+        // A motion-photo video (or any other trailer) appended after the
+        // primary EOI with no MPF index at all must never be offered a saving:
+        // trailing bytes alone are not evidence of a discardable duplicate,
+        // only an MPF index is. This is what keeps the destructive rewrite path
+        // from depending on a filter that lives only in a different file.
+        val primary = concat(soi(), app(JpegMarkers.APP1, "Exif", ByteArray(100)), sof0(), sos(scan), eoi())
+        val trailer = ByteArray(500_000) { 0x42 } // e.g. an appended MP4, not a JPEG at all
+        val bytes = concat(primary, trailer)
+        val s = JpegParser.parseFull(bytes)!!
+        check(s.trailingBytes == trailer.size) { "fixture must actually carry trailing bytes" }
+
+        val plan = JpegRewriter.planStrip(s)
+
+        assertEquals(0, plan.bytesSaved)
+        assertTrue(plan.droppedSegmentOffsets.isEmpty())
+        assertEquals(bytes.size, plan.outputSize)
+        assertFalse(JpegRewriter.meetsSavingFloor(plan, bytes.size))
+    }
+
+    @Test
     fun meetsSavingFloor_requiresBothAbsoluteAndRelativeGains() {
         fun plan(saved: Int) = StripPlan(emptySet(), 0, saved, 0)
 

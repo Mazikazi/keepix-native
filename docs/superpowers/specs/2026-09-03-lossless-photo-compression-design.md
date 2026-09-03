@@ -50,13 +50,56 @@ pixels because the pixel bytes are copied verbatim.
 
 | Segment | Action | Reasoning |
 |---|---|---|
-| MPF secondary image (APP2, `MPF\0`) | **Strip** | Dual-camera depth/secondary capture. Often 100s of KB. Not the displayed image. |
+| MPF secondary image (APP2, `MPF\0`), when confirmed to be a discardable duplicate | **Strip** | Often a dual-camera depth/secondary capture, hundreds of KB. But an MPF secondary is **not always a duplicate**: Google's Ultra HDR (Android 14+, the default JPEG output on Pixel 8+/Galaxy S24+ and much of the current fleet) and Apple's "Most Compatible" HDR JPEG store the **HDR gain map** the same way, and a Google/Samsung motion photo's video half can be appended after the primary EOI the same way too, sometimes alongside an MPF index and sometimes not. Both are part of the displayed result, not a duplicate of it. See §5.1. |
 | EXIF thumbnail (APP1 → IFD1) | **Strip — phase 2** | Redundant preview, 10–20 KB, regenerable by any viewer. Requires TIFF-internal surgery; see §7. |
 | **ICC profile (APP2, `ICC_PROFILE\0`)** | **KEEP** | Removing it leaves pixels identical but renders a Display-P3 photo oversaturated in any color-managed viewer. Visibly wrong output — exactly the failure this design exists to avoid. |
 | XMP (APP1, Adobe ns) | **KEEP** | May carry edits, ratings, crop instructions. |
 | EXIF IFD0 / ExifIFD / GPS | **KEEP** | Date, orientation, GPS. Keepix's own queue sorts on `DATE_ADDED` and the viewer honours orientation. |
 | JFIF (APP0) | **KEEP** | Tiny; some decoders expect it. |
 | Any segment the parser does not fully understand | **KEEP** | Unknown means unknown. Never drop on a guess. |
+
+### 5.1 An MPF secondary is not always disposable
+
+An earlier version of this table asserted the MPF secondary is "not the
+displayed image." That is false, and dangerously so: it is true of a
+dual-camera depth/secondary capture, but not of an **Ultra HDR gain map** or a
+**motion photo's video half**, both of which are commonly stored as the same
+"second JPEG (or MP4) concatenated after the primary EOI" shape an MPF
+secondary uses — sometimes described by an MPF index, sometimes not.
+
+- **Ultra HDR** (Android 14+; the default camera JPEG output on Pixel 8+,
+  Galaxy S24+, and much of the current Android fleet) stores its HDR gain map
+  as an MPF secondary: an SDR primary JPEG, an APP2/MPF index with two MP
+  entries, then the gain-map JPEG appended after the primary's EOI. Apple's
+  "Most Compatible" HDR JPEG output uses the same mechanism. Stripping it
+  leaves every base-image pixel bit-identical — so every check this design
+  performs would pass — while the photo silently loses HDR rendering in any
+  Ultra-HDR-aware viewer. Irreversible once the backup is released.
+- **Motion photos** (Google's Motion Photos, Samsung's equivalent) append a
+  short MP4 after the primary EOI, described by XMP (`GCamera:MicroVideo` /
+  `MicroVideoOffset` for the legacy format, `MotionPhoto` and the GContainer
+  directory for the current one) — sometimes with **no MPF index at all**.
+  Truncating at the primary EOI removes the video; the still photo survives
+  untouched, which makes the loss easy to miss.
+
+Both failures are the same shape ICC removal would be: pixels identical,
+output visibly (or functionally) wrong. The MPF container format alone cannot
+distinguish a discardable duplicate from either of these, so this design does
+not rely on it alone. Before any MPF-based strip, both callers —
+[`PhotoCompressionAnalyzer`](../../../app/src/main/java/com/sese/keepix/utils/PhotoCompressionAnalyzer.kt)
+(so an ineligible file is never counted or offered) and
+[`PhotoCompressor`](../../../app/src/main/java/com/sese/keepix/utils/PhotoCompressor.kt)
+(so one is never rewritten even if something else offered it) — consult
+[`AuxiliaryPayloadDetector`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/AuxiliaryPayloadDetector.kt):
+a fail-closed, header-only check that scans APP1 payload bytes for the marker
+strings above (plus the GContainer `Item:Semantic` property) and treats any
+hit as "not a discardable duplicate, do not strip." A plain dual-camera MPF
+file carrying none of these markers remains eligible. Separately,
+[`JpegRewriter.planStrip`](../../../app/src/main/java/com/sese/keepix/utils/jpeg/JpegRewriter.kt)
+itself now requires an MPF segment to be present before it will offer any
+saving at all — trailing bytes alone, with no MPF index, can never justify a
+truncation — so the destructive rewrite path does not depend on either caller
+remembering to filter first.
 
 ## 6. Architecture
 

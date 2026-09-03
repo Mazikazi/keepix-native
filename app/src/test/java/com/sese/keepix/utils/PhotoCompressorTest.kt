@@ -191,6 +191,112 @@ class PhotoCompressorTest {
         assertEquals(0, io.writeCount)
     }
 
+    /** An XMP-shaped APP1 segment carrying [text] in its packet body. */
+    private fun xmpApp1(text: String): ByteArray =
+        app(JpegMarkers.APP1, "http://ns.adobe.com/xap/1.0/", text.toByteArray(Charsets.US_ASCII))
+
+    @Test
+    fun compress_ultraHdrGainMapMarker_skipsRatherThanStrippingTheGainMap() = runTest {
+        // C1: an Ultra HDR file's MPF index is readable and agrees with the EOI
+        // walk exactly like a dual-camera secondary would -- only the hdrgm:
+        // XMP marker on the primary reveals that truncating here would destroy
+        // the HDR rendering, not a duplicate. Every other check in compress()
+        // would pass; this must still refuse to write.
+        val payload = JpegFixtures.mpfPayload(listOf(400_000L))
+        val primary = concat(
+            soi(),
+            xmpApp1("xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(ByteArray(400_000 - 200) { (it % 251).toByte() }), eoi()
+        )
+        val gainMap = concat(soi(), sof0(), sos(ByteArray(300_000) { 9 }), eoi())
+        val bytes = concat(primary, gainMap)
+        check(bytes.size >= 400_000) { "fixture must actually declare a plausible primary size" }
+
+        val io = FakeMediaFileIo(mapOf(uri to bytes))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals("must never open the file for write", 0, io.writeCount)
+        assertArrayEquals("the HDR file must be left byte-for-byte untouched", bytes, io.files[uri])
+    }
+
+    @Test
+    fun compress_gContainerItemSemanticMarker_skips() = runTest {
+        val payload = JpegFixtures.mpfPayload(listOf(400_000L))
+        val primary = concat(
+            soi(),
+            xmpApp1("http://ns.google.com/photos/1.0/container/ Item:Semantic=\"GainMap\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(ByteArray(400_000 - 200) { (it % 251).toByte() }), eoi()
+        )
+        val secondary = concat(soi(), sof0(), sos(ByteArray(300_000) { 9 }), eoi())
+        val bytes = concat(primary, secondary)
+
+        val io = FakeMediaFileIo(mapOf(uri to bytes))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals(0, io.writeCount)
+    }
+
+    @Test
+    fun compress_motionPhotoMarkerAlongsideAValidMpfIndex_skipsRatherThanDroppingTheVideo() = runTest {
+        // I2: a Samsung-shaped frame carrying BOTH an MPF secondary and a
+        // motion-photo video is eligible by the MPF index alone. Truncating at
+        // the primary EOI would remove the video while the still survives --
+        // an easy-to-miss loss. The MotionPhoto XMP marker must stop it.
+        val payload = JpegFixtures.mpfPayload(listOf(400_000L))
+        val primary = concat(
+            soi(),
+            xmpApp1("Camera:MotionPhoto=\"1\" Camera:MotionPhotoVersion=\"1\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(ByteArray(400_000 - 200) { (it % 251).toByte() }), eoi()
+        )
+        val motionVideoTrailer = ByteArray(300_000) { 0x42 }
+        val bytes = concat(primary, motionVideoTrailer)
+
+        val io = FakeMediaFileIo(mapOf(uri to bytes))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals(0, io.writeCount)
+        assertArrayEquals(bytes, io.files[uri])
+    }
+
+    @Test
+    fun compress_trailingBytesWithNoMpfIndexAtAll_skipsBelowTheSavingFloorRatherThanTruncating() = runTest {
+        // I2's other half: nothing but a trailer after EOI, no MPF segment
+        // anywhere. planStrip must not treat trailing bytes alone as evidence
+        // of a discardable duplicate, so this never even reaches the marker
+        // check -- it fails the saving floor with a zero-saving plan.
+        val primary = concat(
+            soi(), app(JpegMarkers.APP1, "Exif", ByteArray(4000)),
+            sof0(), sos(ByteArray(60_000) { (it % 251).toByte() }), eoi()
+        )
+        val trailer = ByteArray(300_000) { 0x42 }
+        val bytes = concat(primary, trailer)
+
+        val io = FakeMediaFileIo(mapOf(uri to bytes))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals("below the saving floor", (outcome as CompressionOutcome.Skipped).reason)
+        assertEquals(0, io.writeCount)
+        assertArrayEquals(bytes, io.files[uri])
+    }
+
+    @Test
+    fun compress_plainDualCameraMpfWithNoAuxiliaryMarkers_remainsEligible() = runTest {
+        // Do-not-over-block: this is the exact shape from setUp(), with no XMP
+        // markers at all, and it must still be compressed. If the guard were
+        // too broad it would silently disable the whole feature.
+        val io = FakeMediaFileIo(mapOf(uri to original))
+        val outcome = compressor(io, FakeJournalDao()).compress(uri)
+
+        assertTrue("expected Compressed but got $outcome", outcome is CompressionOutcome.Compressed)
+    }
+
     @Test
     fun compress_mpfIndexDisagreesWithTheEoiWalk_skipsRatherThanTruncating() = runTest {
         // An MPF index claiming the primary is SHORTER than where the EOI walk

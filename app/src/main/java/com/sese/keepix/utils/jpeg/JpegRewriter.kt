@@ -43,9 +43,27 @@ object JpegRewriter {
      * The MPF secondary image is a whole second JPEG concatenated after the
      * primary EOI, so truncating there removes it. Its APP2 index segment goes
      * too -- left behind, it would point at bytes that no longer exist.
+     *
+     * Trailing bytes alone, with no MPF segment present, are never a reason to
+     * truncate: an MPF index is the only positive signal this function has that
+     * whatever follows the primary EOI is the specific thing this feature exists
+     * to remove. Without one, "there are bytes after EOI" describes a motion
+     * photo's appended video just as well as a dual-camera secondary, and this
+     * function has no way to tell those apart -- so it must not offer a saving
+     * for either. This makes the zero-saving outcome self-justifying: callers no
+     * longer need to trust a filter that lives in a different file (the
+     * analyser) to keep a file like that out of the destructive path.
      */
     fun planStrip(structure: JpegStructure): StripPlan {
         val dropped = structure.segments.filter(::isMpf)
+        if (dropped.isEmpty()) {
+            return StripPlan(
+                droppedSegmentOffsets = emptySet(),
+                truncateAt = structure.primaryEndOffset,
+                bytesSaved = 0,
+                outputSize = structure.totalLength
+            )
+        }
         val saved = dropped.sumOf { it.length } + structure.trailingBytes
         return StripPlan(
             droppedSegmentOffsets = dropped.map { it.offset }.toSet(),

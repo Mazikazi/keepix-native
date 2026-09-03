@@ -43,6 +43,58 @@ class ReclaimEstimateTest {
         assertEquals(0L, PhotoCompressionAnalyzer.estimateFromHeader(header, bytes, fileSize = 1_000_000L))
     }
 
+    /** An XMP-shaped APP1 segment carrying [text] in its packet body. */
+    private fun xmpApp1(text: String): ByteArray =
+        app(JpegMarkers.APP1, "http://ns.adobe.com/xap/1.0/", text.toByteArray(Charsets.US_ASCII))
+
+    @Test
+    fun estimateFromHeader_ultraHdrGainMapMarker_estimatesZeroDespiteAValidMpfIndex() {
+        // The central C1 case: an Ultra HDR file's MPF index is perfectly
+        // readable and looks exactly like a dual-camera secondary from the MPF
+        // structure alone -- only the XMP hdrgm: marker on the primary image
+        // reveals that the "secondary" is the HDR gain map, not a duplicate.
+        val payload = JpegFixtures.mpfPayload(listOf(2_000_000L))
+        val bytes = concat(
+            soi(),
+            xmpApp1("xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(byteArrayOf(1)), eoi()
+        )
+        val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
+
+        val estimate = PhotoCompressionAnalyzer.estimateFromHeader(header, bytes, fileSize = 2_500_000L)
+
+        assertEquals(0L, estimate)
+    }
+
+    @Test
+    fun estimateFromHeader_gContainerItemSemanticMarker_estimatesZeroDespiteAValidMpfIndex() {
+        val payload = JpegFixtures.mpfPayload(listOf(2_000_000L))
+        val bytes = concat(
+            soi(),
+            xmpApp1("http://ns.google.com/photos/1.0/container/ Item:Semantic=\"GainMap\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(byteArrayOf(1)), eoi()
+        )
+        val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
+
+        assertEquals(0L, PhotoCompressionAnalyzer.estimateFromHeader(header, bytes, fileSize = 2_500_000L))
+    }
+
+    @Test
+    fun estimateFromHeader_motionPhotoMarker_estimatesZeroDespiteAValidMpfIndex() {
+        val payload = JpegFixtures.mpfPayload(listOf(2_000_000L))
+        val bytes = concat(
+            soi(),
+            xmpApp1("GCamera:MicroVideo=\"1\" GCamera:MicroVideoOffset=\"123456\""),
+            JpegFixtures.segment(JpegMarkers.APP2, payload),
+            sof0(), sos(byteArrayOf(1)), eoi()
+        )
+        val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
+
+        assertEquals(0L, PhotoCompressionAnalyzer.estimateFromHeader(header, bytes, fileSize = 2_500_000L))
+    }
+
     @Test
     fun estimateFromHeader_unreadableIndex_estimatesZeroRatherThanGuessing() {
         val bytes = concat(
