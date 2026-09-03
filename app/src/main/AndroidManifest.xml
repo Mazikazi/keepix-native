@@ -4,8 +4,18 @@
 
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Android 14+ "Select photos..." partial-access grant. Requested
+         alongside the two full permissions above so the picker can offer it;
+         see requiredMediaPermissions()/checkMediaPermission() in
+         MainActivity.kt for why a partial grant of just this one still
+         counts as "has access". -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        android:minSdkVersion="34" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- WRITE_EXTERNAL_STORAGE removed — scoped storage handles it -->
 
     <application
         android:allowBackup="false"

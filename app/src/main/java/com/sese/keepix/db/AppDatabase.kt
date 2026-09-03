@@ -4,17 +4,69 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [BinItemEntity::class, KeptItemEntity::class],
-    version = 3,
-    exportSchema = false
+    entities = [BinItemEntity::class, KeptItemEntity::class, CompressionJournalEntity::class],
+    version = 6,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun binItemDao(): BinItemDao
     abstract fun keptItemDao(): KeptItemDao
+    abstract fun compressionJournalDao(): CompressionJournalDao
 
     companion object {
+        /**
+         * Adds [BinItemEntity.pendingDeletion]. Existing rows default to 0 (not
+         * pending), so an upgrade never marks a user's bin for removal.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE bin_items ADD COLUMN pendingDeletion INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        /**
+         * Adds [KeptItemEntity.isFavorite] and [KeptItemEntity.pendingFavoriteSync].
+         * Existing rows default to 0, so an upgrade never marks anything favorite
+         * and never queues a sync.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE kept_items ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE kept_items ADD COLUMN pendingFavoriteSync INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        /**
+         * Adds the `compression_journal` table. Purely additive: no existing row
+         * is read or rewritten, and an upgraded database starts with an empty
+         * journal, which is correct -- nothing was ever mid-write.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `compression_journal` (
+                        `mediaUri` TEXT NOT NULL,
+                        `backupPath` TEXT NOT NULL,
+                        `originalSize` INTEGER NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`mediaUri`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -25,8 +77,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "keepix_database"
                 )
-                .fallbackToDestructiveMigration()
-                .build()
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .build()
                 INSTANCE = instance
                 instance
             }

@@ -3,38 +3,28 @@ package com.sese.keepix.utils
 import android.app.PendingIntent
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 
+/**
+ * The only way this app removes a media file from the device.
+ *
+ * The app does not own the MediaStore rows it deletes, so `ContentResolver.delete`
+ * is not usable — it throws `RecoverableSecurityException`. Every removal goes
+ * through [MediaStore.createDeleteRequest] and the system confirmation dialog it
+ * produces, and a Room row is only dropped once that dialog returns `RESULT_OK`.
+ */
 object MediaDeletionHandler {
 
     /**
-     * Returns a PendingIntent that prompts the user to grant permission to delete the given URIs.
-     * On Android 11+ (API 30+), this uses createDeleteRequest.
-     * On older versions, we can just delete them directly if we have WRITE_EXTERNAL_STORAGE.
+     * Returns a [PendingIntent] that prompts the user to confirm deletion of the
+     * given URIs. Requires minSdk 30.
+     *
+     * @param uris must be non-empty and already filtered by
+     *   [MediaUriFilter.filterExistingUris]; a URI whose file no longer exists
+     *   makes the whole request fail.
      */
-    fun getDeletionIntent(context: Context, uris: List<Uri>): PendingIntent? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return MediaStore.createDeleteRequest(context.contentResolver, uris)
-        }
-        return null
-    }
-
-    /**
-     * Directly deletes the media if no PendingIntent is needed (pre-API 30).
-     */
-    fun deleteMediaDirectly(context: Context, uris: List<Uri>): Int {
-        var deletedCount = 0
-        for (uri in uris) {
-            try {
-                val deleted = context.contentResolver.delete(uri, null, null)
-                deletedCount += deleted
-            } catch (e: Exception) {
-                if (com.sese.keepix.BuildConfig.DEBUG) {
-                    android.util.Log.e("MediaDeletionHandler", "Failed to delete media: $uri", e)
-                }
-            }
-        }
-        return deletedCount
+    fun getDeletionIntent(context: Context, uris: List<Uri>): PendingIntent {
+        require(uris.isNotEmpty()) { "getDeletionIntent requires a non-empty URI list" }
+        return MediaStore.createDeleteRequest(context.contentResolver, uris)
     }
 }
