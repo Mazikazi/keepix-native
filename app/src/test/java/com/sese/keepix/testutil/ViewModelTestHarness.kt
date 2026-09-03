@@ -7,6 +7,8 @@ import com.sese.keepix.data.MediaRepository
 import com.sese.keepix.db.BinItemDao
 import com.sese.keepix.db.KeptItemDao
 import com.sese.keepix.ui.KeepixViewModel
+import com.sese.keepix.utils.PhotoCompressor
+import com.sese.keepix.utils.ReclaimEstimate
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -112,7 +114,8 @@ object ViewModelTestHarness {
         repository: MediaRepository = mockk(relaxed = true),
         binItemDao: BinItemDao = mockk(relaxed = true),
         keptItemDao: KeptItemDao = mockk(relaxed = true),
-        prefs: KeepixPreferences = fakePrefs()
+        prefs: KeepixPreferences = fakePrefs(),
+        photoCompressor: PhotoCompressor = mockk(relaxed = true)
     ): KeepixViewModel {
         val vm = allocate()
         setField(vm, "repository", repository)
@@ -141,6 +144,20 @@ object ViewModelTestHarness {
         setField(vm, "seenMediaIds", mutableSetOf<Long>())
         setField<Any?>(vm, "pageCursor", null)
         setField(vm, "batchLoadInFlight", false)
+        setField(vm, "photoCompressor", photoCompressor)
+        val pendingWrite = MutableStateFlow<KeepixViewModel.PendingWriteRequest?>(null)
+        setField(vm, "_pendingWrite", pendingWrite)
+        setField(vm, "pendingWrite", pendingWrite.asStateFlow())
+        val estimate = MutableStateFlow<ReclaimEstimate?>(null)
+        setField(vm, "_compressionEstimate", estimate)
+        setField(vm, "compressionEstimate", estimate.asStateFlow())
+        val progress = MutableStateFlow<Pair<Int, Int>?>(null)
+        setField(vm, "_compressionScanProgress", progress)
+        setField(vm, "compressionScanProgress", progress.asStateFlow())
+        val status = MutableStateFlow<String?>(null)
+        setField(vm, "_compressionStatus", status)
+        setField(vm, "compressionStatus", status.asStateFlow())
+        setField<Any?>(vm, "scanJob", null)
         return vm
     }
 }

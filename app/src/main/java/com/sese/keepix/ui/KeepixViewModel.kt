@@ -14,12 +14,31 @@ import com.sese.keepix.data.MediaAccessException
 import com.sese.keepix.db.AppDatabase
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
+import com.sese.keepix.utils.CompressionOutcome
+import com.sese.keepix.utils.ContentResolverMediaFileIo
+import com.sese.keepix.utils.PhotoCompressionAnalyzer
+import com.sese.keepix.utils.PhotoCompressor
+import com.sese.keepix.utils.ReclaimEstimate
 import com.sese.keepix.utils.SessionCleanupWorker
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "KeepixViewModel"
+
+/**
+ * URIs per compression run. `createWriteRequest` takes a collection and the user
+ * confirms once, but each confirmed file is then rewritten one at a time, so a
+ * run's real cost is bytes moved, not dialogs shown. 50 files of a few MB each is
+ * a few hundred MB of I/O -- enough to be worth doing, small enough that a user
+ * who changes their mind has not committed to an hour of work.
+ */
+const val MAX_COMPRESSION_BATCH = 50
 
 class KeepixViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -27,6 +46,16 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     private val binItemDao = AppDatabase.getDatabase(application).binItemDao()
     private val keptItemDao = AppDatabase.getDatabase(application).keptItemDao()
     val prefs = KeepixPreferences(application)
+
+    private val compressionJournalDao = AppDatabase.getDatabase(application).compressionJournalDao()
+
+    private val photoCompressor = PhotoCompressor(
+        io = ContentResolverMediaFileIo(application),
+        journalDao = compressionJournalDao,
+        backupDir = File(application.filesDir, "compression_backups")
+    )
+
+    private val compressionAnalyzer = PhotoCompressionAnalyzer(application)
 
     // Media state
     private val _mediaItems = MutableStateFlow<List<MediaItem>>(emptyList())
@@ -155,6 +184,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     init {
         performLaunchCleanup()
         schedulePeriodicCleanup()
+        checkForInterruptedCompressions()
     }
 
     private fun schedulePeriodicCleanup() {
@@ -714,5 +744,190 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun rearmFavoritePrompt() {
         _favoritePromptedThisSession.value = false
+    }
+
+    // Compression state
+
+    enum class WriteRequestKind { RECOVERY, COMPRESSION }
+
+    /**
+     * One outstanding `createWriteRequest`. At most one exists at a time, which
+     * is what enforces "recovery before new work" without a second Activity
+     * effect competing for the shared system-dialog gate: [requestCompression]
+     * refuses while this is non-null, and [checkForInterruptedCompressions] sets
+     * it from `init`, before any user action can.
+     */
+    data class PendingWriteRequest(val kind: WriteRequestKind, val uris: List<String>)
+
+    private val _pendingWrite = MutableStateFlow<PendingWriteRequest?>(null)
+    val pendingWrite: StateFlow<PendingWriteRequest?> = _pendingWrite.asStateFlow()
+
+    private val _compressionEstimate = MutableStateFlow<ReclaimEstimate?>(null)
+    val compressionEstimate: StateFlow<ReclaimEstimate?> = _compressionEstimate.asStateFlow()
+
+    /** (scanned, total) while a scan runs; null otherwise. */
+    private val _compressionScanProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val compressionScanProgress: StateFlow<Pair<Int, Int>?> = _compressionScanProgress.asStateFlow()
+
+    /** Human-readable result of the last run, for the Settings screen. */
+    private val _compressionStatus = MutableStateFlow<String?>(null)
+    val compressionStatus: StateFlow<String?> = _compressionStatus.asStateFlow()
+
+    private var scanJob: Job? = null
+
+    /**
+     * Repairs anything a previous run left mid-write. Called from `init`, so a
+     * recovery request is always armed before the user can arm a compression one.
+     *
+     * The restore itself needs write access, so this only ARMS the request; the
+     * Activity obtains the grant and calls [onWriteGranted]. If the app already
+     * holds write access for those URIs the system resolves the request without
+     * showing anything, so the usual case is invisible.
+     */
+    fun checkForInterruptedCompressions() {
+        viewModelScope.launch {
+            try {
+                val rows = compressionJournalDao.getAll()
+                if (rows.isEmpty()) return@launch
+                Log.w(TAG, "Found ${rows.size} interrupted rewrite(s); arming recovery")
+                _pendingWrite.value = PendingWriteRequest(
+                    WriteRequestKind.RECOVERY, rows.map { it.mediaUri }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not read the compression journal", e)
+            }
+        }
+    }
+
+    /**
+     * Releases journal rows whose media file is confirmed gone.
+     *
+     * Without this, a row for a photo the user deleted elsewhere would re-arm a
+     * recovery request on every single launch, forever, with no way to ever
+     * succeed -- the file it wants to restore does not exist. Mirrors how the
+     * favorite effect calls [confirmFavoriteSync] for its own missing URIs.
+     *
+     * Only ever called with URIs [MediaUriFilter] has *proven* absent, never with
+     * ones it merely could not verify.
+     */
+    fun discardInterruptedWrites(uris: List<String>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val rows = compressionJournalDao.getAll().filter { it.mediaUri in uris.toSet() }
+                for (row in rows) {
+                    withContext(Dispatchers.IO) { File(row.backupPath).delete() }
+                    compressionJournalDao.deleteByUri(row.mediaUri)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not discard journal rows for missing media", e)
+            }
+        }
+    }
+
+    /** Measures reclaimable space across the kept library. Writes nothing. */
+    fun scanForReclaimableSpace() {
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            _compressionStatus.value = null
+            _compressionScanProgress.value = 0 to 0
+            try {
+                val estimate = compressionAnalyzer.analyze(keptItems.value) { scanned, total ->
+                    _compressionScanProgress.value = scanned to total
+                }
+                _compressionEstimate.value = estimate
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Analysis failed", e)
+                _error.value = "Couldn't measure reclaimable space."
+            } finally {
+                _compressionScanProgress.value = null
+            }
+        }
+    }
+
+    fun cancelCompressionScan() {
+        scanJob?.cancel()
+        scanJob = null
+        _compressionScanProgress.value = null
+    }
+
+    /**
+     * Arms a write request for the eligible files found by the last scan. Writes
+     * nothing: the actual rewrites wait for [onWriteGranted].
+     */
+    fun requestCompression() {
+        // Never displace a pending recovery. A second IntentSender launched while
+        // one is outstanding is silently dropped by Android, and the loser's work
+        // would then wait forever behind a latched guard -- the exact shape that
+        // caused three defects in the earlier correctness pass.
+        if (_pendingWrite.value != null) return
+
+        val uris = _compressionEstimate.value?.eligibleUris.orEmpty().take(MAX_COMPRESSION_BATCH)
+        if (uris.isEmpty()) return
+        _pendingWrite.value = PendingWriteRequest(WriteRequestKind.COMPRESSION, uris)
+    }
+
+    /**
+     * The system granted write access. Runs the request that was armed.
+     *
+     * Files are rewritten strictly one at a time. The confirmation batches; the
+     * writes do not -- at most one file may ever be mid-write, which is what
+     * makes the journal's single-row recovery sufficient.
+     */
+    fun onWriteGranted() {
+        val request = _pendingWrite.value ?: return
+        viewModelScope.launch {
+            try {
+                when (request.kind) {
+                    WriteRequestKind.RECOVERY -> {
+                        val outcomes = photoCompressor.recover()
+                        val restored = outcomes.count { it is CompressionOutcome.Failed && it.restored }
+                        if (restored > 0) {
+                            _compressionStatus.value =
+                                "Restored $restored photo${if (restored == 1) "" else "s"} after an interrupted optimization."
+                        }
+                    }
+                    WriteRequestKind.COMPRESSION -> {
+                        var compressed = 0
+                        var saved = 0L
+                        var failed = 0
+                        for (uri in request.uris) {
+                            when (val outcome = photoCompressor.compress(uri)) {
+                                is CompressionOutcome.Compressed -> {
+                                    compressed++
+                                    saved += outcome.bytesSaved
+                                }
+                                is CompressionOutcome.Failed -> failed++
+                                is CompressionOutcome.Skipped -> Unit
+                            }
+                        }
+                        _compressionStatus.value = buildString {
+                            append("Optimized $compressed photo${if (compressed == 1) "" else "s"}")
+                            append(", reclaiming ${saved / (1024 * 1024)} MB")
+                            if (failed > 0) append(". $failed could not be changed and were left as they were")
+                            append(".")
+                        }
+                        // The estimate is now stale by construction.
+                        _compressionEstimate.value = null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Compression run failed", e)
+                _error.value = "Something went wrong while optimizing. Your photos were left unchanged."
+            } finally {
+                _pendingWrite.value = null
+            }
+        }
+    }
+
+    /**
+     * The user declined, or the request could not be launched. Nothing was
+     * written and no backup exists yet -- the grant is obtained before the first
+     * backup, so a decline leaves the file system exactly as it was.
+     */
+    fun onWriteDenied() {
+        _pendingWrite.value = null
     }
 }
