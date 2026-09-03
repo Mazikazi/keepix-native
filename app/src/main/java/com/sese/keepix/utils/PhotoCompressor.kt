@@ -114,7 +114,7 @@ class PhotoCompressor(
             writeBackup(backup, original)
         } catch (e: Exception) {
             Log.w(TAG, "Could not write a backup for $uriString", e)
-            backup.delete()
+            withContext(Dispatchers.IO) { backup.delete() }
             return CompressionOutcome.Skipped(uriString, "could not create a backup")
         }
 

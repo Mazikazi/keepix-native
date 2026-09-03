@@ -55,7 +55,17 @@ private class FakeMediaFileIo(initial: Map<String, ByteArray>) : MediaFileIo {
 /** Minimal in-memory journal. */
 private class FakeJournalDao : CompressionJournalDao {
     val rows = LinkedHashMap<String, CompressionJournalEntity>()
-    override suspend fun insert(entry: CompressionJournalEntity) { rows[entry.mediaUri] = entry }
+    /** Throw on the next insert, once. */
+    var failNextInsert = false
+
+    override suspend fun insert(entry: CompressionJournalEntity) {
+        if (failNextInsert) {
+            failNextInsert = false
+            throw IOException("simulated insert failure")
+        }
+        rows[entry.mediaUri] = entry
+    }
+
     override suspend fun getAll(): List<CompressionJournalEntity> = rows.values.sortedBy { it.startedAt }
     override suspend fun count(): Int = rows.size
     override suspend fun deleteByUri(mediaUri: String) { rows.remove(mediaUri) }
@@ -200,6 +210,22 @@ class PhotoCompressorTest {
 
         assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
         assertEquals(0, io.writeCount)
+    }
+
+    @Test
+    fun compress_journalInsertThrows_skipsWithoutWritingAndLeavesNoOrphanedBackup() = runTest {
+        val io = FakeMediaFileIo(mapOf(uri to original))
+        val dao = FakeJournalDao()
+        val backupDir = temp.newFolder("backups6")
+        dao.failNextInsert = true
+
+        val outcome = PhotoCompressor(io, dao, backupDir).compress(uri)
+
+        assertTrue("expected Skipped but got $outcome", outcome is CompressionOutcome.Skipped)
+        assertEquals("must not write when journal insert fails", 0, io.writeCount)
+        assertArrayEquals("file bytes must be unchanged", original, io.files[uri])
+        assertTrue("journal must be empty", dao.rows.isEmpty())
+        assertEquals("no orphaned backup allowed", 0, backupDir.listFiles()!!.size)
     }
 
     @Test
