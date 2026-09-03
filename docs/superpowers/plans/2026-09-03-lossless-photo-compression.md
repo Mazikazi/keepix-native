@@ -592,37 +592,40 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 **Files:**
 - Create: `app/src/main/java/com/sese/keepix/utils/jpeg/MpfIndex.kt`
+- Modify: `app/src/test/java/com/sese/keepix/utils/jpeg/JpegFixtures.kt`
 - Test: `app/src/test/java/com/sese/keepix/utils/jpeg/MpfIndexTest.kt`
 
 **Interfaces:**
-- Consumes: `JpegSegment` (Task 1).
-- Produces: `MpfIndex.readPrimaryImageSize(bytes: ByteArray, segment: JpegSegment): Long?`
+- Consumes: `JpegSegment`, `JpegFixtures` (Task 1).
+- Produces:
+  - `MpfIndex.readPrimaryImageSize(bytes: ByteArray, segment: JpegSegment): Long?`
+  - `JpegFixtures.mpfPayload(imageSizes: List<Long>, littleEndian: Boolean = false): ByteArray` —
+    **Tasks 5 and 6 both use this.** It lives in the shared fixture file rather than
+    being re-derived privately in each test class, because three hand-rolled TIFF
+    writers that must agree byte-for-byte is three chances to encode the same
+    misunderstanding differently.
 
 **Background:** an APP2/MPF payload is `"MPF\u0000"` followed by a TIFF structure: a byte-order mark (`II` little-endian or `MM` big-endian), the 16-bit magic `0x002A`, and a 32-bit offset to the first IFD — **all offsets are relative to the byte-order mark**, not to the file. An IFD is a 16-bit entry count, then that many 12-byte entries (`tag:u16, type:u16, count:u32, valueOrOffset:u32`). Tag `0xB002` is the MP Entry list: `count` bytes of payload at `valueOrOffset`, 16 bytes per image. Within one MP entry, bytes 4–7 are the **individual image size** and bytes 8–11 its offset. Entry 0 is the primary image, whose size is measured from the start of the file.
 
 This reader is **read-only and advisory**. Its output is used for the analyser's estimate and as a cross-check before a write. It is never used to decide where to truncate.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the shared MPF fixture builder**
 
-Create `app/src/test/java/com/sese/keepix/utils/jpeg/MpfIndexTest.kt`:
+Append to `app/src/test/java/com/sese/keepix/utils/jpeg/JpegFixtures.kt`, inside the object:
 
 ```kotlin
-package com.sese.keepix.utils.jpeg
-
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
-import java.io.ByteArrayOutputStream
-
-class MpfIndexTest {
-
     /**
-     * Builds an APP2/MPF payload declaring two images with the given byte sizes.
-     * Layout after "MPF\0": TIFF header (8 bytes), IFD with one entry (2 + 12 + 4),
-     * then the MP entry array.
+     * An APP2/MPF payload declaring [imageSizes].size images with those byte
+     * lengths. Layout after `"MPF "`: the 8-byte TIFF header, an IFD holding
+     * one entry (2 + 12 + 4 bytes), then the MP entry array.
+     *
+     * Shared rather than re-derived per test class: three hand-rolled TIFF
+     * writers that must agree byte-for-byte is three chances to encode the same
+     * misunderstanding three different ways, and a fixture bug here would look
+     * exactly like a parser bug. Tasks 2, 5 and 6 all build on this.
      */
-    private fun mpfPayload(sizes: List<Long>, littleEndian: Boolean = false): ByteArray {
-        val tiff = ByteArrayOutputStream()
+    fun mpfPayload(imageSizes: List<Long>, littleEndian: Boolean = false): ByteArray {
+        val tiff = java.io.ByteArrayOutputStream()
         fun u16(v: Int) {
             if (littleEndian) { tiff.write(v and 0xFF); tiff.write(v shr 8) }
             else { tiff.write(v shr 8); tiff.write(v and 0xFF) }
@@ -638,17 +641,32 @@ class MpfIndexTest {
         if (littleEndian) { tiff.write('I'.code); tiff.write('I'.code) }
         else { tiff.write('M'.code); tiff.write('M'.code) }
         u16(0x002A)
-        u32(8L)                       // first IFD immediately follows the header
-        u16(1)                        // one entry
-        u16(0xB002)                   // MP Entry
-        u16(7)                        // UNDEFINED
-        u32((sizes.size * 16).toLong())
-        u32(8L + 2 + 12 + 4)          // offset of the entry array, TIFF-relative
-        u32(0L)                       // next-IFD pointer: none
-        for (s in sizes) { u32(0L); u32(s); u32(0L); u16(0); u16(0) }
+        u32(8L)                              // the first IFD follows the header
+        u16(1)                               // one entry
+        u16(0xB002)                          // MP Entry
+        u16(7)                               // UNDEFINED
+        u32((imageSizes.size * 16).toLong())
+        u32(8L + 2 + 12 + 4)                 // entry array offset, TIFF-relative
+        u32(0L)                              // no next IFD
+        for (s in imageSizes) { u32(0L); u32(s); u32(0L); u16(0); u16(0) }
 
         return "MPF".toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + tiff.toByteArray()
     }
+```
+
+- [ ] **Step 2: Write the failing test**
+
+Create `app/src/test/java/com/sese/keepix/utils/jpeg/MpfIndexTest.kt`:
+
+```kotlin
+package com.sese.keepix.utils.jpeg
+
+import com.sese.keepix.utils.jpeg.JpegFixtures.mpfPayload
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class MpfIndexTest {
 
     private fun segmentFor(payload: ByteArray): Pair<ByteArray, JpegSegment> {
         val file = JpegFixtures.concat(JpegFixtures.soi(), JpegFixtures.segment(JpegMarkers.APP2, payload))
@@ -691,7 +709,7 @@ class MpfIndexTest {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 3: Run it to verify it fails**
 
 ```bash
 export JAVA_HOME="C:/Program Files/Android/Android Studio1/jbr" && ./gradlew testDebugUnitTest --tests "com.sese.keepix.utils.jpeg.MpfIndexTest"
@@ -699,7 +717,7 @@ export JAVA_HOME="C:/Program Files/Android/Android Studio1/jbr" && ./gradlew tes
 
 Expected: `Unresolved reference: MpfIndex`.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Write the implementation**
 
 Create `app/src/main/java/com/sese/keepix/utils/jpeg/MpfIndex.kt`:
 
@@ -784,7 +802,7 @@ object MpfIndex {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [ ] **Step 5: Run it to verify it passes**
 
 ```bash
 export JAVA_HOME="C:/Program Files/Android/Android Studio1/jbr" && ./gradlew testDebugUnitTest --tests "com.sese.keepix.utils.jpeg.MpfIndexTest"
@@ -792,10 +810,10 @@ export JAVA_HOME="C:/Program Files/Android/Android Studio1/jbr" && ./gradlew tes
 
 Expected: `BUILD SUCCESSFUL`, 4 tests passing.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add app/src/main/java/com/sese/keepix/utils/jpeg/MpfIndex.kt app/src/test/java/com/sese/keepix/utils/jpeg/MpfIndexTest.kt
+git add app/src/main/java/com/sese/keepix/utils/jpeg/MpfIndex.kt app/src/test/java/com/sese/keepix/utils/jpeg/MpfIndexTest.kt app/src/test/java/com/sese/keepix/utils/jpeg/JpegFixtures.kt
 ```
 
 Message body:
@@ -1503,6 +1521,7 @@ package com.sese.keepix.utils
 
 import com.sese.keepix.db.CompressionJournalDao
 import com.sese.keepix.db.CompressionJournalEntity
+import com.sese.keepix.utils.jpeg.JpegFixtures
 import com.sese.keepix.utils.jpeg.JpegFixtures.app
 import com.sese.keepix.utils.jpeg.JpegFixtures.concat
 import com.sese.keepix.utils.jpeg.JpegFixtures.eoi
@@ -1685,7 +1704,7 @@ class PhotoCompressorTest {
     fun compress_mpfIndexDisagreesWithTheEoiWalk_skipsRatherThanTruncating() = runTest {
         // An MPF index claiming the primary is SHORTER than where the EOI walk
         // found it means the two disagree about where the image ends. Skip.
-        val payload = mpfPayloadDeclaring(primarySize = 10L)
+        val payload = JpegFixtures.mpfPayload(listOf(10L))
         val bytes = concat(
             soi(), app(JpegMarkers.APP2, "MPF", payload),
             sof0(), sos(ByteArray(400_000) { 5 }), eoi(),
@@ -1734,20 +1753,6 @@ class PhotoCompressorTest {
         assertTrue("an unrecoverable row must not be retried every launch", dao.rows.isEmpty())
     }
 
-    /** Big-endian MPF payload declaring one image of the given size. */
-    private fun mpfPayloadDeclaring(primarySize: Long): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        fun u16(v: Int) { out.write(v shr 8); out.write(v and 0xFF) }
-        fun u32(v: Long) {
-            out.write(((v shr 24) and 0xFF).toInt()); out.write(((v shr 16) and 0xFF).toInt())
-            out.write(((v shr 8) and 0xFF).toInt()); out.write((v and 0xFF).toInt())
-        }
-        out.write('M'.code); out.write('M'.code)
-        u16(0x002A); u32(8L)
-        u16(1); u16(0xB002); u16(7); u32(16L); u32(26L); u32(0L)
-        u32(0L); u32(primarySize); u32(0L); u16(0); u16(0)
-        return "MPF".toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + out.toByteArray()
-    }
 }
 ```
 
@@ -2040,6 +2045,7 @@ Create `app/src/test/java/com/sese/keepix/utils/ReclaimEstimateTest.kt`:
 package com.sese.keepix.utils
 
 import com.sese.keepix.utils.jpeg.HeaderResult
+import com.sese.keepix.utils.jpeg.JpegFixtures
 import com.sese.keepix.utils.jpeg.JpegFixtures.app
 import com.sese.keepix.utils.jpeg.JpegFixtures.concat
 import com.sese.keepix.utils.jpeg.JpegFixtures.eoi
@@ -2050,27 +2056,12 @@ import com.sese.keepix.utils.jpeg.JpegMarkers
 import com.sese.keepix.utils.jpeg.JpegParser
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import java.io.ByteArrayOutputStream
 
 class ReclaimEstimateTest {
 
-    private fun mpfPayload(primarySize: Long): ByteArray {
-        val out = ByteArrayOutputStream()
-        fun u16(v: Int) { out.write(v shr 8); out.write(v and 0xFF) }
-        fun u32(v: Long) {
-            out.write(((v shr 24) and 0xFF).toInt()); out.write(((v shr 16) and 0xFF).toInt())
-            out.write(((v shr 8) and 0xFF).toInt()); out.write((v and 0xFF).toInt())
-        }
-        out.write('M'.code); out.write('M'.code)
-        u16(0x002A); u32(8L)
-        u16(1); u16(0xB002); u16(7); u32(16L); u32(26L); u32(0L)
-        u32(0L); u32(primarySize); u32(0L); u16(0); u16(0)
-        return "MPF".toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + out.toByteArray()
-    }
-
     @Test
     fun estimateFromHeader_mpfPresent_countsTheTrailingImageAndTheIndexSegment() {
-        val payload = mpfPayload(primarySize = 2_000_000L)
+        val payload = JpegFixtures.mpfPayload(listOf(2_000_000L))
         val bytes = concat(
             soi(), app(JpegMarkers.APP2, "MPF", payload), sof0(), sos(byteArrayOf(1)), eoi()
         )
@@ -2102,7 +2093,7 @@ class ReclaimEstimateTest {
     fun estimateFromHeader_declaredSizeExceedsTheFile_estimatesZero() {
         // A nonsensical index must not produce a negative or inflated figure.
         val bytes = concat(
-            soi(), app(JpegMarkers.APP2, "MPF", mpfPayload(9_000_000L)),
+            soi(), app(JpegMarkers.APP2, "MPF", JpegFixtures.mpfPayload(listOf(9_000_000L))),
             sof0(), sos(byteArrayOf(1)), eoi()
         )
         val header = (JpegParser.parseHeader(bytes) as HeaderResult.Ok).header
