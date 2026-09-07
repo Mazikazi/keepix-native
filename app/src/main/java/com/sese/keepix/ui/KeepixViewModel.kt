@@ -14,6 +14,8 @@ import com.sese.keepix.data.MediaAccessException
 import com.sese.keepix.db.AppDatabase
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
+import com.sese.keepix.core.logic.QualityTier
+import com.sese.keepix.core.logic.canUseTier
 import com.sese.keepix.utils.CompressionOutcome
 import com.sese.keepix.utils.ContentResolverMediaFileIo
 import com.sese.keepix.utils.PhotoCompressionAnalyzer
@@ -40,6 +42,15 @@ private const val TAG = "KeepixViewModel"
  * who changes their mind has not committed to an hour of work.
  */
 const val MAX_COMPRESSION_BATCH = 50
+
+/**
+ * Shown when a write request is armed while another is still outstanding. Both
+ * ways of asking for a rewrite -- Settings' Optimize and the deck's shrink queue
+ * -- hit the same guard, and a silently swallowed tap is the defect this exists
+ * to prevent, so they say the same thing.
+ */
+private const val WRITE_BUSY_MESSAGE =
+    "Keepix is still finishing a previous optimization. Try again in a moment."
 
 /**
  * (photos this run would actually touch, bytes those specific files are
@@ -943,13 +954,113 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
             // outstanding (a recovery still waiting on its grant, or a
             // compression run still mid-batch) does nothing visible at all --
             // the tap is silently swallowed by the guard above.
-            _compressionStatus.value =
-                "Keepix is still finishing a previous optimization. Try again in a moment."
+            _compressionStatus.value = WRITE_BUSY_MESSAGE
             return
         }
 
         val uris = _compressionEstimate.value?.eligibleUris.orEmpty().take(MAX_COMPRESSION_BATCH)
         if (uris.isEmpty()) return
+        _pendingWrite.value = PendingWriteRequest(WriteRequestKind.COMPRESSION, uris)
+    }
+
+    // Per-card shrink queue
+
+    /**
+     * Cards swiped down in the deck whose rewrite has not been armed yet.
+     *
+     * A per-card shrink cannot go through [requestCompression]: that arms every
+     * eligible URI the last library scan found, so one swipe would rewrite an
+     * unrelated batch. Nor can each swipe arm its own request -- these files are
+     * not app-owned, so every rewrite needs a `createWriteRequest` grant, and one
+     * system dialog per swipe is unusable. Swipes therefore accumulate here and
+     * [flushCompressionQueue] spends the lot as a single grant. That is what the
+     * deck's persistent "Shrinking N" chip counts, and why it has to be
+     * persistent: the count is work the user has asked for but not yet consented
+     * to write.
+     *
+     * URI strings, not [MediaItem]s: that is all [PendingWriteRequest] and
+     * [PhotoCompressor] take, and it makes membership -- undo, duplicate swipes
+     * of the same card -- a plain string comparison.
+     */
+    private val _shrinkQueue = MutableStateFlow<List<String>>(emptyList())
+
+    /** Queued-but-unwritten count, for the deck's "Shrinking N" chip. */
+    val shrinkQueueCount: StateFlow<Int> =
+        _shrinkQueue.map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    // Light-tier uses spent, the third argument to [canUseTier].
+    //
+    // ponytail: in memory, so the daily cap is really "3 per process launch"
+    // until there is somewhere to keep it. KeepixPreferences stores no Pro flag,
+    // no per-day use count and no streak credits, and inventing that schema here
+    // is work the paywall would have to undo. The gate below is a real
+    // [canUseTier] call, so wiring it up later means replacing these three
+    // arguments -- the rule itself does not move.
+    private var lightUsesToday = 0
+
+    /**
+     * Queues one card's shrink. Touches no disk -- see [_shrinkQueue].
+     *
+     * Returns false when the card cannot be queued, which the deck needs in order
+     * to spring the card back rather than fly it away: a video (Media3
+     * Transformer runs at roughly realtime/4, so video shrink is out of v1 --
+     * addendum A4), a card already queued, a queue already at
+     * [MAX_COMPRESSION_BATCH], or a free tier whose daily Light allowance is
+     * spent.
+     */
+    fun queueCompression(item: MediaItem): Boolean {
+        if (item.isVideo) return false
+        val queue = _shrinkQueue.value
+        val uri = item.uri.toString()
+        if (uri in queue || queue.size >= MAX_COMPRESSION_BATCH) return false
+        // ponytail: isPro/freeMaxCredits hardcoded -- see [lightUsesToday]. Only
+        // LIGHT is offered in v1, so a missing Max credit cannot be reached here.
+        if (!canUseTier(QualityTier.LIGHT, isPro = false, lightUsesToday, freeMaxCredits = 0)) {
+            return false
+        }
+        lightUsesToday++
+        _shrinkQueue.value = queue + uri
+        return true
+    }
+
+    /**
+     * Undo: drops a queued card before anything is written, and refunds the tier
+     * use it spent -- an undone shrink never happened.
+     *
+     * Note the deck holds its own undo window and only calls [queueCompression]
+     * once it closes, so this is the path for an undo that outlives that window,
+     * not the deck's own rewind.
+     */
+    fun dequeueCompression(item: MediaItem) {
+        val uri = item.uri.toString()
+        if (uri !in _shrinkQueue.value) return
+        _shrinkQueue.value = _shrinkQueue.value - uri
+        lightUsesToday = (lightUsesToday - 1).coerceAtLeast(0)
+    }
+
+    /**
+     * Spends the queue as one `createWriteRequest`. Writes nothing itself: the
+     * rewrites wait for [onWriteGranted], exactly as [requestCompression]'s do.
+     *
+     * The queue is emptied when the request is armed rather than when the run
+     * finishes -- the armed [PendingWriteRequest] owns those URIs from that
+     * point, and the chip must not keep counting work the system is already
+     * asking the user about. A denial therefore drops the batch, the same way a
+     * denied [requestCompression] does (see [onWriteDenied]); the cards are still
+     * in the library and can be swiped again.
+     *
+     * A request already outstanding is left strictly alone -- displacing it is
+     * what [requestCompression]'s guard exists to prevent -- and the queue is
+     * kept intact so the next flush still has it.
+     */
+    fun flushCompressionQueue() {
+        val uris = _shrinkQueue.value
+        if (uris.isEmpty()) return
+        if (_pendingWrite.value != null) {
+            _compressionStatus.value = WRITE_BUSY_MESSAGE
+            return
+        }
+        _shrinkQueue.value = emptyList()
         _pendingWrite.value = PendingWriteRequest(WriteRequestKind.COMPRESSION, uris)
     }
 
