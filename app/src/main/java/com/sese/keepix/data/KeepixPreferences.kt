@@ -2,6 +2,7 @@ package com.sese.keepix.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.sese.keepix.core.logic.RetentionWindow
 import java.util.UUID
 
 class KeepixPreferences(context: Context) {
@@ -38,13 +39,16 @@ class KeepixPreferences(context: Context) {
     val currentSessionId: String
         get() = lastSessionId
 
-    val isSessionMode: Boolean
-        get() = retentionDays == 0
+    // Retention arithmetic lives in RetentionWindow so the bin badge, the
+    // cleanup worker and this agree by construction. The stored value is passed
+    // through as-is: snapping it onto the new six-stop wheel is a migration that
+    // belongs with the Settings rebuild, not here.
+    private val window: RetentionWindow get() = RetentionWindow(retentionDays)
 
-    fun getExpiryTimestamp(): Long {
-        if (retentionDays == 0) return 0L
-        return System.currentTimeMillis() + (retentionDays * 24L * 60L * 60L * 1000L)
-    }
+    val isSessionMode: Boolean
+        get() = window.isSessionOnly
+
+    fun getExpiryTimestamp(): Long = window.expiryAtMs(System.currentTimeMillis())
 
     companion object {
         private const val KEY_RETENTION_DAYS = "retention_days"
