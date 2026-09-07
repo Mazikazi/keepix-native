@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
@@ -116,6 +117,41 @@ fun Modifier.neuInset(
         }
     }
     if (clipContent) drawn.clip(shape) else drawn
+}
+
+/**
+ * Inset shadows drawn OVER the content, not under it.
+ *
+ * A photo well is a carved hollow with the image lying in the bottom of it, so
+ * the shadow has to fall across the photo. [neuInset] paints an opaque surface
+ * first and would hide the image entirely.
+ *
+ * ponytail: reuses the standard shadow pair. The prototype softens the
+ * over-image copy slightly (0.5/0.35 against 0.7/0.6); close enough that the
+ * difference is invisible on a photo, and one pair beats a second set of tokens.
+ */
+fun Modifier.neuInsetOver(
+    shape: Shape = RoundedCornerShape(24.dp),
+    offset: Dp = 10.dp,
+    blur: Dp = 20.dp,
+): Modifier = composed {
+    val colors = LocalNeuColors.current
+    drawWithContent {
+        drawContent()
+        val path = shapePath(shape)
+        val d = offset.toPx()
+        val r = blur.toPx() * NeuBlurScale
+        val margin = d * 2f + r * 3f + 24f
+        val inverse = Path().apply {
+            addRect(Rect(-margin, -margin, size.width + margin, size.height + margin))
+            addPath(path)
+            fillType = PathFillType.EvenOdd
+        }
+        clipPath(path) {
+            drawShadowOf(inverse, d, d, r, colors.shadowDark)
+            drawShadowOf(inverse, -d, -d, r, colors.shadowLight)
+        }
+    }
 }
 
 private fun DrawScope.shapePath(shape: Shape): Path =

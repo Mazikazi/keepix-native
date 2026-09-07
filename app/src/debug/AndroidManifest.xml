@@ -10,5 +10,9 @@
             android:name=".ui.neu.NeuPreviewActivity"
             android:exported="true"
             android:theme="@style/Theme.Keepix" />
+        <activity
+            android:name=".ui.neu.NeuDeckPreviewActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Keepix" />
     </application>
 </manifest>
