@@ -3,8 +3,10 @@ package com.sese.keepix.ui.neu
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -22,10 +24,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -43,11 +49,13 @@ import coil.compose.AsyncImage
 import com.sese.keepix.core.logic.DeckAction
 import com.sese.keepix.core.logic.DragAxis
 import com.sese.keepix.core.logic.dragAxis
+import com.sese.keepix.core.logic.UndoWindow
 import com.sese.keepix.core.logic.cardRotationDegrees
 import com.sese.keepix.core.logic.resolveDeckAction
 import com.sese.keepix.data.MediaItem
 import com.sese.keepix.utils.formatSizeShort
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,6 +90,29 @@ private val AxisLockSlop = 12.dp
 /** A card mid-flight. Rendered above the stack so the incoming card is never animated. */
 private data class ExitingCard(val item: MediaItem, val action: DeckAction, val from: Offset)
 
+/**
+ * An action the user has taken but that has not been written yet.
+ *
+ * The undo window is the commit deadline, not a cosmetic affordance: nothing
+ * reaches MediaStore or WorkManager until it closes. One level, no stack -- a
+ * second action flushes the first immediately rather than queueing it.
+ */
+private data class PendingCommit(
+    val item: MediaItem,
+    val action: DeckAction,
+    val startedAtMs: Long,
+)
+
+/** Where a committed card flies to, and where a rewound one springs back from. */
+private fun exitOffset(action: DeckAction, density: Density): Offset =
+    with(density) {
+        when (action) {
+            DeckAction.KEEP -> Offset(540.dp.toPx(), 60.dp.toPx())
+            DeckAction.BIN -> Offset((-540).dp.toPx(), 60.dp.toPx())
+            DeckAction.SHRINK -> Offset(0f, 600.dp.toPx())
+        }
+    }
+
 @Composable
 fun NeuDeckScreen(
     items: List<MediaItem>,
@@ -95,13 +126,46 @@ fun NeuDeckScreen(
     queuedCount: Int = 0,
 ) {
     val c = neu
+    var pending by remember { mutableStateOf<PendingCommit?>(null) }
+    var rewind by remember { mutableStateOf<DeckAction?>(null) }
+
+    // The card leaves the deck the moment it is swiped; only the write waits.
+    val visible = items.filterNot { it.id == pending?.item?.id }
+
+    fun request(item: MediaItem, action: DeckAction) {
+        // One level, no stack: taking a second action commits the first now.
+        pending?.let { onCommit(it.item, it.action) }
+        rewind = null
+        pending = PendingCommit(item, action, System.currentTimeMillis())
+    }
+
+    // The deadline. Deliberately a delay against the wall clock rather than the
+    // ring's animation: with ANIMATOR_DURATION_SCALE at 0 an animation finishes
+    // instantly, and driving the deadline from it would silently destroy the
+    // undo window for exactly the users who set that.
+    LaunchedEffect(pending) {
+        val p = pending ?: return@LaunchedEffect
+        delay(UndoWindow.remainingMs(p.startedAtMs, System.currentTimeMillis()))
+        onCommit(p.item, p.action)
+        pending = null
+    }
+
     Column(
         modifier
             .fillMaxSize()
             .background(c.surface)
             .systemBarsPadding(),
     ) {
-        DeckHeader(streakDays, queuedCount, onOpenLibrary)
+        DeckHeader(
+            streakDays = streakDays,
+            queuedCount = queuedCount,
+            pending = pending,
+            onUndo = {
+                rewind = pending?.action
+                pending = null
+            },
+            onOpenLibrary = onOpenLibrary,
+        )
 
         Box(
             Modifier
@@ -109,13 +173,19 @@ fun NeuDeckScreen(
                 .fillMaxWidth()
                 .padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 4.dp),
         ) {
-            CardStack(items, onCommit, onTapCard)
+            CardStack(
+                items = visible,
+                onCommit = ::request,
+                onTapCard = onTapCard,
+                rewind = rewind,
+                onRewindDone = { rewind = null },
+            )
         }
 
         ActionRow(
-            front = items.firstOrNull(),
-            favorited = items.firstOrNull()?.let(isFavorite) ?: false,
-            onAction = { item, action -> onCommit(item, action) },
+            front = visible.firstOrNull(),
+            favorited = visible.firstOrNull()?.let(isFavorite) ?: false,
+            onAction = ::request,
             onToggleFavorite = onToggleFavorite,
         )
     }
@@ -126,6 +196,8 @@ private fun CardStack(
     items: List<MediaItem>,
     onCommit: (MediaItem, DeckAction) -> Unit,
     onTapCard: (MediaItem) -> Unit,
+    rewind: DeckAction?,
+    onRewindDone: () -> Unit,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -158,6 +230,16 @@ private fun CardStack(
     fun commit(item: MediaItem, action: DeckAction, from: Offset) {
         exiting = ExitingCard(item, action, from)
         onCommit(item, action)
+    }
+
+    // Undo replays the swipe backwards: the restored card is placed where it
+    // flew to and springs home. Keyed on the front id as well as the flag so it
+    // runs against the freshly-restored card's own Animatable.
+    LaunchedEffect(front?.id, rewind) {
+        val action = rewind ?: return@LaunchedEffect
+        drag.snapTo(exitOffset(action, density))
+        drag.animateTo(Offset.Zero, spring(dampingRatio = 0.62f, stiffness = 380f))
+        onRewindDone()
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -196,7 +278,12 @@ private fun CardStack(
                     }
                     .pointerInput(front.id) {
                         detectDragGestures(
-                            onDragStart = { endGesture() },
+                            onDragStart = {
+                                // Kill any rewind in flight, or its longer spring
+                                // bleeds into this swipe.
+                                onRewindDone()
+                                endGesture()
+                            },
                             onDragCancel = {
                                 endGesture()
                                 scope.launch { drag.animateTo(Offset.Zero) }
@@ -259,16 +346,9 @@ private fun ExitingCardOverlay(flight: ExitingCard, onDone: () -> Unit) {
     val offset = remember(flight) { Animatable(flight.from, Offset.VectorConverter) }
     val extra = remember(flight) { Animatable(0f) }
 
-    androidx.compose.runtime.LaunchedEffect(flight) {
-        val target = with(density) {
-            when (flight.action) {
-                DeckAction.KEEP -> Offset(540.dp.toPx(), 60.dp.toPx())
-                DeckAction.BIN -> Offset((-540).dp.toPx(), 60.dp.toPx())
-                DeckAction.SHRINK -> Offset(0f, 600.dp.toPx())
-            }
-        }
+    LaunchedEffect(flight) {
         launch { extra.animateTo(1f, tween(CARD_EXIT_MS, easing = CardExitEasing)) }
-        offset.animateTo(target, tween(CARD_EXIT_MS, easing = CardExitEasing))
+        offset.animateTo(exitOffset(flight.action, density), tween(CARD_EXIT_MS, easing = CardExitEasing))
         onDone()
     }
 
@@ -441,7 +521,13 @@ private fun ShrinkOverlay(progress: Float, item: MediaItem) {
 }
 
 @Composable
-private fun DeckHeader(streakDays: Int, queuedCount: Int, onOpenLibrary: () -> Unit) {
+private fun DeckHeader(
+    streakDays: Int,
+    queuedCount: Int,
+    pending: PendingCommit?,
+    onUndo: () -> Unit,
+    onOpenLibrary: () -> Unit,
+) {
     val c = neu
     Row(
         Modifier
@@ -478,6 +564,8 @@ private fun DeckHeader(streakDays: Int, queuedCount: Int, onOpenLibrary: () -> U
             }
         }
 
+        if (pending != null) UndoRing(pending, onUndo)
+
         // 2x2 grid of 5dp squares with 3dp gaps -- CSS shapes in the prototype,
         // so there is no icon asset to port.
         Box(
@@ -501,6 +589,47 @@ private fun DeckHeader(streakDays: Int, queuedCount: Int, onOpenLibrary: () -> U
                 }
             }
         }
+    }
+}
+
+/**
+ * The countdown. A violet arc sweeping 360 -> 0, and no numerals -- the arc is
+ * the only indicator the design gives.
+ */
+@Composable
+private fun UndoRing(pending: PendingCommit, onUndo: () -> Unit) {
+    val c = neu
+    // Driven off the wall clock rather than an Animatable, for the same reason
+    // the deadline is: an animation can be scaled to zero duration, and the ring
+    // must keep telling the truth about how long is left.
+    val sweep by produceState(360f, pending) {
+        while (true) {
+            value = UndoWindow.sweepDegrees(pending.startedAtMs, System.currentTimeMillis())
+            if (value <= 0f) break
+            withFrameMillis { }
+        }
+    }
+    Box(
+        Modifier
+            .size(46.dp)
+            .neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp)
+            .clickable(onClick = onUndo),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawArc(
+                color = c.inactiveDot.copy(alpha = 0.22f),
+                startAngle = -90f, sweepAngle = 360f, useCenter = true,
+            )
+            drawArc(color = c.accent, startAngle = -90f, sweepAngle = sweep, useCenter = true)
+        }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(4.dp)
+                .neuInset(CircleShape, offset = 3.dp, blur = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text("\u21BA", style = NeuType.itemName, color = c.accent) }
     }
 }
 
