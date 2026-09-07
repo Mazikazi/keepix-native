@@ -23,5 +23,16 @@ data class BinItemEntity(
      * only removed after the user confirms the system delete dialog; the row is
      * dropped only after that confirmation succeeds.
      */
-    val pendingDeletion: Boolean = false
+    val pendingDeletion: Boolean = false,
+    /**
+     * True once MediaStore has been told to trash the file, so it is hidden
+     * from the device gallery and Google Photos.
+     *
+     * Separate from [pendingDeletion], which is about permanent removal. A
+     * binned item is trashed first (it disappears) and deleted later (the bytes
+     * go), and the two need different consent dialogs. False on every existing
+     * row after the v7 migration, which is correct: those files were binned
+     * under the old behaviour and are still sitting in the user's gallery.
+     */
+    val trashed: Boolean = false
 )

@@ -58,6 +58,39 @@ interface BinItemDao {
         ids.chunked(SQL_ID_CHUNK_SIZE).forEach { unmarkPendingDeletionChunk(it) }
     }
 
+    /**
+     * Binned rows whose file is still visible in the gallery, waiting on a
+     * trash request.
+     *
+     * Excludes rows already marked for permanent deletion: those are about to
+     * be removed outright, and trashing them first would buy a second consent
+     * dialog for nothing.
+     */
+    @Query("SELECT * FROM bin_items WHERE trashed = 0 AND pendingDeletion = 0 ORDER BY deletedAt DESC")
+    fun getUntrashed(): Flow<List<BinItemEntity>>
+
+    @Query("UPDATE bin_items SET trashed = 1 WHERE id IN (:ids)")
+    suspend fun markTrashedChunk(ids: List<Long>)
+
+    /**
+     * Records that MediaStore accepted the trash request for these rows.
+     * Callers must only pass ids the user actually confirmed -- the dialog is
+     * cancellable, and a row marked trashed without the write having happened
+     * would leave the file in the gallery with nothing left to retry it.
+     * Chunked internally for the same reason as [markPendingDeletion].
+     */
+    suspend fun markTrashed(ids: List<Long>) {
+        ids.chunked(SQL_ID_CHUNK_SIZE).forEach { markTrashedChunk(it) }
+    }
+
+    @Query("UPDATE bin_items SET trashed = 0 WHERE id IN (:ids)")
+    suspend fun unmarkTrashedChunk(ids: List<Long>)
+
+    /** Used when an item is restored to the gallery, i.e. untrashed. */
+    suspend fun unmarkTrashed(ids: List<Long>) {
+        ids.chunked(SQL_ID_CHUNK_SIZE).forEach { unmarkTrashedChunk(it) }
+    }
+
     @Query("SELECT COUNT(*) FROM bin_items")
     fun getBinCount(): Flow<Int>
 
