@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug variant only, so this never reaches a release APK. No launcher intent
+  filter on purpose: a second home-screen icon is noise. Start it with
+  `adb shell am start -n com.sese.keepix/.ui.neu.NeuPreviewActivity`.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".ui.neu.NeuPreviewActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Keepix" />
+    </application>
+</manifest>
