@@ -902,46 +902,6 @@ private fun MediaCardContent(
     }
 }
 
-@Composable
-private fun AutoplayVideo(
-    uri: android.net.Uri,
-    modifier: Modifier = Modifier
-) {
-    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
-
-    DisposableEffect(uri) {
-        onDispose {
-            videoViewRef?.stopPlayback()
-            videoViewRef = null
-        }
-    }
-
-    AndroidView(
-        modifier = modifier,
-        factory = { context ->
-            VideoView(context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                setVideoURI(uri)
-                setOnPreparedListener { player: MediaPlayer ->
-                    player.isLooping = true
-                    player.setVolume(0f, 0f)
-                    start()
-                }
-                videoViewRef = this
-            }
-        },
-        update = { videoView ->
-            if (!videoView.isPlaying) {
-                videoView.setVideoURI(uri)
-                videoView.start()
-            }
-        }
-    )
-}
-
 private fun formatDate(epochSeconds: Long): String {
     val sdf = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
     return sdf.format(Date(epochSeconds * 1000))

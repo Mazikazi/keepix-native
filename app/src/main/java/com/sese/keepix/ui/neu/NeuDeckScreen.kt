@@ -42,6 +42,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.style.TextAlign
@@ -56,6 +58,8 @@ import com.sese.keepix.core.logic.UndoWindow
 import com.sese.keepix.core.logic.cardRotationDegrees
 import com.sese.keepix.core.logic.resolveDeckAction
 import com.sese.keepix.data.MediaItem
+import com.sese.keepix.ui.AutoplayVideo
+import com.sese.keepix.ui.MediaTransitionBounds
 import com.sese.keepix.utils.formatSizeShort
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -136,6 +140,8 @@ fun NeuDeckScreen(
     onErrorDismiss: () -> Unit = {},
     onRetry: () -> Unit = {},
     hasOnlyPartialMediaAccess: Boolean = false,
+    onCardBoundsChanged: (MediaTransitionBounds) -> Unit = {},
+    isFullscreenOpen: Boolean = false,
 ) {
     val c = neu
     var pending by remember { mutableStateOf<PendingCommit?>(null) }
@@ -195,6 +201,8 @@ fun NeuDeckScreen(
                     onTapCard = onTapCard,
                     rewind = rewind,
                     onRewindDone = { rewind = null },
+                    onCardBoundsChanged = onCardBoundsChanged,
+                    isFullscreenOpen = isFullscreenOpen,
                 )
                 // Order matters. A cold start on a returning user composes with
                 // no items, isLoading false and reachedEnd false on the very
@@ -240,6 +248,8 @@ private fun CardStack(
     onTapCard: (MediaItem) -> Unit,
     rewind: DeckAction?,
     onRewindDone: () -> Unit,
+    onCardBoundsChanged: (MediaTransitionBounds) -> Unit,
+    isFullscreenOpen: Boolean,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -305,6 +315,11 @@ private fun CardStack(
             val dyDp = with(density) { drag.value.y.toDp().value }
             DeckCard(
                 item = front,
+                // Only the front card plays, and it stops while the fullscreen
+                // viewer is up -- otherwise the hidden player keeps decoding
+                // underneath the one the user is actually watching.
+                autoplay = !isFullscreenOpen,
+                onBoundsChanged = onCardBoundsChanged,
                 keepProgress = (dxDp / 100f).coerceIn(0f, 1f),
                 binProgress = (-dxDp / 100f).coerceIn(0f, 1f),
                 // The 24dp dead zone is the prototype's, not an invention.
@@ -418,6 +433,8 @@ private fun ExitingCardOverlay(flight: ExitingCard, onDone: () -> Unit) {
 private fun DeckCard(
     item: MediaItem,
     modifier: Modifier = Modifier,
+    autoplay: Boolean = false,
+    onBoundsChanged: ((MediaTransitionBounds) -> Unit)? = null,
     keepProgress: Float = 0f,
     binProgress: Float = 0f,
     shrinkProgress: Float = 0f,
@@ -426,6 +443,16 @@ private fun DeckCard(
     Box(
         modifier
             .fillMaxSize()
+            .let { m ->
+                if (onBoundsChanged == null) m else m.onGloballyPositioned {
+                    val b = it.boundsInWindow()
+                    onBoundsChanged(
+                        MediaTransitionBounds(
+                            left = b.left, top = b.top, width = b.width, height = b.height,
+                        )
+                    )
+                }
+            }
             .neuExtruded(RoundedCornerShape(32.dp), offset = 12.dp, blur = 20.dp, strong = true)
             .padding(12.dp),
     ) {
@@ -437,12 +464,16 @@ private fun DeckCard(
                 // image rather than behind it.
                 .neuInsetOver(RoundedCornerShape(24.dp)),
         ) {
-            AsyncImage(
-                model = item.uri,
-                contentDescription = item.displayName,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (item.isVideo && autoplay) {
+                AutoplayVideo(item.uri, Modifier.fillMaxSize())
+            } else {
+                AsyncImage(
+                    model = item.uri,
+                    contentDescription = item.displayName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
 
             if (item.isVideo) {
                 Row(
