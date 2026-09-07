@@ -41,7 +41,7 @@ class MediaRepositoryTest {
     private val context = mockk<Context>()
     private val resolver = mockk<ContentResolver>()
 
-    private data class Row(val id: Long, val dateAdded: Long, val isVideo: Boolean)
+    private data class Row(val id: Long, val dateAdded: Long, val isVideo: Boolean, val sizeBytes: Long = 0L)
 
     private fun setUpStatics() {
         every { context.contentResolver } returns resolver
@@ -89,6 +89,7 @@ class MediaRepositoryTest {
         every { cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.WIDTH) } returns 4
         every { cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.HEIGHT) } returns 5
         every { cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DURATION) } returns 6
+        every { cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE) } returns 7
 
         every { cursor.moveToNext() } returnsMany (rows.map { true } + false)
         every { cursor.getLong(0) } returnsMany rows.map { it.id }
@@ -100,6 +101,7 @@ class MediaRepositoryTest {
         every { cursor.getInt(4) } returnsMany rows.map { 0 }
         every { cursor.getInt(5) } returnsMany rows.map { 0 }
         every { cursor.getLong(6) } returnsMany rows.map { 0L }
+        every { cursor.getLong(7) } returnsMany rows.map { it.sizeBytes }
 
         if (honorsLimit) {
             val extras = mockk<Bundle>()
@@ -148,7 +150,7 @@ class MediaRepositoryTest {
         val bundleSlot = slot<Bundle>()
         stubQuery(emptyCursor(), bundleSlot)
 
-        MediaRepository(context).getMediaPage(after = MediaPageKey(dateAdded = 1000L, id = 5L), limit = 10)
+        MediaRepository(context).getMediaPage(after = MediaPageKey(sortValue = 1000L, id = 5L), limit = 10)
 
         val bundle = bundleSlot.captured
         val base = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
@@ -240,5 +242,51 @@ class MediaRepositoryTest {
         } throws SecurityException("no permission")
 
         MediaRepository(context).getMediaPage(after = null, limit = 10)
+    }
+
+    @Test
+    fun `SIZE is projected and mapped onto the item`(): Unit = runBlocking {
+        setUpStatics()
+        stubQuery(cursorOf(listOf(Row(id = 1L, dateAdded = 100L, isVideo = false, sizeBytes = 4_200_000L))))
+
+        val page = MediaRepository(context).getMediaPage(after = null, limit = 10)
+
+        // Without this the library cannot sort largest-first, month headers
+        // cannot total, and the savings ledger has nothing to subtract from.
+        assertEquals(4_200_000L, page.single().sizeBytes)
+    }
+
+    @Test
+    fun `largest-first pages on SIZE, not DATE_ADDED`(): Unit = runBlocking {
+        setUpStatics()
+        val bundleSlot = slot<Bundle>()
+        stubQuery(emptyCursor(), bundleSlot)
+
+        MediaRepository(context).getMediaPage(
+            after = MediaPageKey(sortValue = 5_000L, id = 9L),
+            limit = 10,
+            sort = LibrarySort.LARGEST_FIRST,
+        )
+
+        val bundle = bundleSlot.captured
+        val base = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+        val expected = "($base) AND (" +
+            "${MediaStore.Files.FileColumns.SIZE} < ? OR (" +
+            "${MediaStore.Files.FileColumns.SIZE} = ? AND ${MediaStore.Files.FileColumns._ID} < ?))"
+        verify { bundle.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, expected) }
+        verify {
+            bundle.putString(
+                ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                "${MediaStore.Files.FileColumns.SIZE} DESC, ${MediaStore.Files.FileColumns._ID} DESC"
+            )
+        }
+        // Ties on size are broken by _ID, exactly as they are on date -- two
+        // photos of identical byte length are common (bursts, re-saves).
+        verify {
+            bundle.putStringArray(
+                ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                arrayOf("1", "3", "5000", "5000", "9")
+            )
+        }
     }
 }

@@ -22,13 +22,32 @@ data class MediaItem(
     val displayName: String = "",
     val width: Int = 0,
     val height: Int = 0,
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    /** MediaStore SIZE. Drives largest-first sort, month totals and the savings ledger. */
+    val sizeBytes: Long = 0L
 )
 
 /**
- * Keyset pagination cursor: the (dateAdded, id) of the last row already
- * delivered to the caller, in DATE_ADDED DESC, _ID DESC order. Pass it back
- * into [MediaRepository.getMediaPage] to fetch the next strictly-older rows.
+ * The two orders the library offers. Both page through [MediaRepository.getMediaPage]
+ * with the same keyset machinery -- only the leading column changes.
+ *
+ * Largest-first is the default in the design: someone reclaiming storage is
+ * looking for the big files, not the recent ones.
+ */
+enum class LibrarySort(val column: String) {
+    NEWEST_FIRST(MediaStore.Files.FileColumns.DATE_ADDED),
+    LARGEST_FIRST(MediaStore.Files.FileColumns.SIZE),
+}
+
+/**
+ * Keyset pagination cursor: the (sort column, id) of the last row already
+ * delivered to the caller, in `<sort column> DESC, _ID DESC` order. Pass it
+ * back into [MediaRepository.getMediaPage] to fetch the next rows.
+ *
+ * [sortValue] is whichever column the active [LibrarySort] orders by --
+ * DATE_ADDED for newest-first, SIZE for largest-first. A cursor is only
+ * meaningful against the sort that produced it; switching sort restarts paging
+ * from null, which is what the library's segmented control does anyway.
  *
  * Deliberately not a row-count offset. DATE_ADDED is second-precision, so
  * bulk imports routinely tie -- an offset can't break that tie consistently
@@ -41,7 +60,7 @@ data class MediaItem(
  * by _ID, and a page always resumes exactly after the last row it actually
  * delivered, regardless of what happened to other rows.
  */
-data class MediaPageKey(val dateAdded: Long, val id: Long)
+data class MediaPageKey(val sortValue: Long, val id: Long)
 
 class MediaRepository(private val context: Context) {
 
@@ -52,7 +71,8 @@ class MediaRepository(private val context: Context) {
         MediaStore.Files.FileColumns.DISPLAY_NAME,
         MediaStore.Files.FileColumns.WIDTH,
         MediaStore.Files.FileColumns.HEIGHT,
-        MediaStore.Files.FileColumns.DURATION
+        MediaStore.Files.FileColumns.DURATION,
+        MediaStore.Files.FileColumns.SIZE
     )
 
     private val baseSelection =
@@ -63,8 +83,8 @@ class MediaRepository(private val context: Context) {
         MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
     )
 
-    private val sortOrder =
-        "${MediaStore.Files.FileColumns.DATE_ADDED} DESC, ${MediaStore.Files.FileColumns._ID} DESC"
+    private fun sortOrder(sort: LibrarySort) =
+        "${sort.column} DESC, ${MediaStore.Files.FileColumns._ID} DESC"
 
     // minSdk is 30, so Build.VERSION_CODES.Q is always satisfied here.
     private val collection: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -88,7 +108,11 @@ class MediaRepository(private val context: Context) {
      * silently ignores the Bundle's query args entirely, which would silently
      * turn this back into an unpaginated full-table read.
      */
-    suspend fun getMediaPage(after: MediaPageKey?, limit: Int): List<MediaItem> = withContext(Dispatchers.IO) {
+    suspend fun getMediaPage(
+        after: MediaPageKey?,
+        limit: Int,
+        sort: LibrarySort = LibrarySort.NEWEST_FIRST,
+    ): List<MediaItem> = withContext(Dispatchers.IO) {
         val mediaList = mutableListOf<MediaItem>()
 
         try {
@@ -99,11 +123,11 @@ class MediaRepository(private val context: Context) {
                 selectionArgs = baseSelectionArgs
             } else {
                 selection = "($baseSelection) AND (" +
-                    "${MediaStore.Files.FileColumns.DATE_ADDED} < ? OR (" +
-                    "${MediaStore.Files.FileColumns.DATE_ADDED} = ? AND ${MediaStore.Files.FileColumns._ID} < ?))"
+                    "${sort.column} < ? OR (" +
+                    "${sort.column} = ? AND ${MediaStore.Files.FileColumns._ID} < ?))"
                 selectionArgs = baseSelectionArgs + arrayOf(
-                    after.dateAdded.toString(),
-                    after.dateAdded.toString(),
+                    after.sortValue.toString(),
+                    after.sortValue.toString(),
                     after.id.toString()
                 )
             }
@@ -111,7 +135,7 @@ class MediaRepository(private val context: Context) {
             val queryArgs = Bundle().apply {
                 putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
                 putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
-                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder(sort))
                 putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
             }
 
@@ -143,6 +167,7 @@ class MediaRepository(private val context: Context) {
                 val widthColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.WIDTH)
                 val heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.HEIGHT)
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DURATION)
+                val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
 
                 // Bounded by `limit` on our own side too: if a provider
                 // ignores QUERY_ARG_LIMIT this stops us from reading (and
@@ -155,6 +180,7 @@ class MediaRepository(private val context: Context) {
                     val width = cursor.getInt(widthColumn)
                     val height = cursor.getInt(heightColumn)
                     val duration = cursor.getLong(durationColumn)
+                    val sizeBytes = cursor.getLong(sizeColumn)
 
                     val isVideo = type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
                     val contentUri = if (!isVideo) {
@@ -172,7 +198,8 @@ class MediaRepository(private val context: Context) {
                             displayName = displayName,
                             width = width,
                             height = height,
-                            durationMs = duration
+                            durationMs = duration,
+                            sizeBytes = sizeBytes
                         )
                     )
                 }

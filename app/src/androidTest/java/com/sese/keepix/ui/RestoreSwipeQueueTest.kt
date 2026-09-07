@@ -48,7 +48,7 @@ class RestoreSwipeQueueTest {
         // these two newer items and read past dateAdded=1000 (the cursor).
         val mediaItemsFlow = field("_mediaItems").get(vm) as MutableStateFlow<List<MediaItem>>
         mediaItemsFlow.value = listOf(mediaItem(1L, 3000L), mediaItem(2L, 2000L))
-        field("pageCursor").set(vm, MediaPageKey(dateAdded = 1000L, id = 5L))
+        field("pageCursor").set(vm, MediaPageKey(sortValue = 1000L, id = 5L))
 
         val restored = BinItemEntity(
             mediaId = 5L,

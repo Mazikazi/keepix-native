@@ -423,10 +423,14 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      * True if [key] sorts at or after (i.e. pagination has already read past)
      * the current [pageCursor], in DATE_ADDED DESC, _ID DESC order. `null`
      * pageCursor means nothing has been read yet, so nothing is past it.
+     *
+     * The deck pages newest-first only, so `MediaPageKey.sortValue` is
+     * DATE_ADDED throughout this class. The library's largest-first sort keeps
+     * its own cursor; the two are never compared against each other.
      */
     private fun isPastCursor(key: MediaPageKey): Boolean {
         val cursor = pageCursor ?: return false
-        if (key.dateAdded != cursor.dateAdded) return key.dateAdded > cursor.dateAdded
+        if (key.sortValue != cursor.sortValue) return key.sortValue > cursor.sortValue
         // Inclusive of equality (fix wave 2, N1): key == cursor means this
         // exact row IS pageCursor -- it was already read (and delivered or
         // excluded) by the fetch that set pageCursor to it, and the next
