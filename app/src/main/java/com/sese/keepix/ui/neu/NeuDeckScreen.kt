@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +44,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -124,6 +127,15 @@ fun NeuDeckScreen(
     isFavorite: (MediaItem) -> Boolean = { false },
     streakDays: Int = 0,
     queuedCount: Int = 0,
+    // Same names and defaults as the screen this replaces, so swapping the nav
+    // over is a rename rather than a rewiring.
+    isLoading: Boolean = false,
+    hasLoadedOnce: Boolean = true,
+    reachedEnd: Boolean = true,
+    error: String? = null,
+    onErrorDismiss: () -> Unit = {},
+    onRetry: () -> Unit = {},
+    hasOnlyPartialMediaAccess: Boolean = false,
 ) {
     val c = neu
     var pending by remember { mutableStateOf<PendingCommit?>(null) }
@@ -167,19 +179,49 @@ fun NeuDeckScreen(
             onOpenLibrary = onOpenLibrary,
         )
 
+        if (error != null) ErrorStrip(error, onErrorDismiss)
+
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 4.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            CardStack(
-                items = visible,
-                onCommit = ::request,
-                onTapCard = onTapCard,
-                rewind = rewind,
-                onRewindDone = { rewind = null },
-            )
+            when {
+                visible.isNotEmpty() -> CardStack(
+                    items = visible,
+                    onCommit = ::request,
+                    onTapCard = onTapCard,
+                    rewind = rewind,
+                    onRewindDone = { rewind = null },
+                )
+                // Order matters. A cold start on a returning user composes with
+                // no items, isLoading false and reachedEnd false on the very
+                // first frame, because loadMedia only flips isLoading from
+                // inside a coroutine that has not run yet. Without
+                // hasLoadedOnce that frame reads as a load failure and flashes
+                // an error on every launch.
+                !hasLoadedOnce || isLoading -> CircularProgressIndicator(color = c.accent)
+                reachedEnd -> DeckMessage(
+                    glyph = "\u2713",
+                    glyphColor = c.teal,
+                    title = "Every photo's been seen",
+                    body = if (hasOnlyPartialMediaAccess) {
+                        "That is everything you shared with Keepix. Share more photos to keep going."
+                    } else {
+                        "New photos land here automatically."
+                    },
+                )
+                else -> DeckMessage(
+                    glyph = "\u21BA",
+                    glyphColor = c.clayGlyph,
+                    title = "Couldn't load your library",
+                    body = "Nothing was changed. Try again?",
+                    actionLabel = "Try again",
+                    onAction = onRetry,
+                )
+            }
         }
 
         ActionRow(
@@ -633,6 +675,83 @@ private fun UndoRing(pending: PendingCommit, onUndo: () -> Unit) {
     }
 }
 
+/**
+ * The app's signature object: three nested layers, extruded around inset around
+ * extruded. Shared by onboarding and the exhausted deck at the same proportions.
+ */
+@Composable
+private fun Medallion(glyph: String, glyphColor: Color) {
+    Box(
+        Modifier.size(120.dp).neuExtruded(CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.size(86.dp).neuInset(CircleShape, offset = 10.dp, blur = 20.dp, strong = true),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier.size(50.dp).neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(glyph, style = NeuType.screenTitle, color = glyphColor) }
+        }
+    }
+}
+
+@Composable
+private fun DeckMessage(
+    glyph: String,
+    glyphColor: Color,
+    title: String,
+    body: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
+) {
+    val c = neu
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Medallion(glyph, glyphColor)
+        Text(title, style = NeuType.screenTitle, color = c.textPrimary, textAlign = TextAlign.Center)
+        Text(
+            body,
+            style = NeuType.body,
+            color = c.textSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 276.dp),
+        )
+        if (actionLabel != null) {
+            Box(
+                Modifier
+                    .neuExtruded(RoundedCornerShape(16.dp))
+                    .background(c.accent, RoundedCornerShape(16.dp))
+                    .clickable(onClick = onAction)
+                    .padding(horizontal = 26.dp, vertical = 17.dp),
+            ) { Text(actionLabel, style = NeuType.itemName, color = c.onAccent) }
+        }
+    }
+}
+
+/** Dismissible, and never covers the deck: a failed top-up must not hide the cards. */
+@Composable
+private fun ErrorStrip(message: String, onDismiss: () -> Unit) {
+    val c = neu
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 4.dp)
+            .neuInset(RoundedCornerShape(16.dp), offset = 3.dp, blur = 6.dp)
+            .padding(horizontal = 15.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(message, style = NeuType.metadata, color = c.clay, modifier = Modifier.weight(1f))
+        Box(Modifier.clickable(onClick = onDismiss)) {
+            Text("\u2715", style = NeuType.buttonLabel, color = c.textSecondary)
+        }
+    }
+}
+
 @Composable
 private fun ActionRow(
     front: MediaItem?,
@@ -665,9 +784,10 @@ private fun ActionRow(
                 .size(56.dp)
                 .neuExtruded(CircleShape)
                 .background(
-                    // Shrink is disabled on video in v1: extruded rest shape kept,
-                    // fill dropped to the inactive tone.
-                    if (front != null && front.isVideo) c.inactiveDot else c.accent,
+                    // Disabled keeps the extruded rest shape and drops the fill to
+                    // the inactive tone: on video in v1, and on an empty deck,
+                    // where an accent-filled button still reads as pressable.
+                    if (front == null || front.isVideo) c.inactiveDot else c.accent,
                     CircleShape,
                 )
                 .clickable(enabled = front != null && !front.isVideo) {
