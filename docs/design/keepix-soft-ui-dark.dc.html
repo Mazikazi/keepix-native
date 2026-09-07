@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#262A33;font-family:'DM Sans',system-ui,sans-serif;color:#E7EBF2;-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+a{color:#8C84FF;text-decoration:none}a:hover{color:#8B84FF}
+button:focus-visible,input:focus-visible{outline:2px solid #8C84FF;outline-offset:2px}
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:12px;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;height:26px;margin-top:-7px;border-radius:50%;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)}
+@keyframes kx-toast{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes kx-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+@keyframes kx-sheet{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes kx-sheet-out{from{transform:translateY(0)}to{transform:translateY(104%)}}
+@keyframes kx-fade-out{from{opacity:1}to{opacity:0}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:flex-start;gap:56px;padding:48px 52px 72px;box-sizing:border-box;background:#262A33">
+
+  <div style="width:272px;flex:none;display:flex;flex-direction:column;gap:26px;padding-top:8px">
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="width:58px;height:58px;flex:none;border-radius:16px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;animation:float 3s ease-in-out infinite">
+        <div style="width:26px;height:26px;border-radius:9999px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)"></div>
+      </div>
+      <div>
+        <div style="font:800 27px/1.05 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em">Keepix</div>
+        <div style="font:500 12px/1.3 'DM Sans',sans-serif;color:#9AA3B2;margin-top:3px">Soft UI Dark · Android</div>
+      </div>
+    </div>
+
+    <div style="font:400 13px/1.65 'DM Sans',sans-serif;color:#9AA3B2;text-wrap:pretty">Everything is molded from one deep charcoal surface. Drag the card left, right or down — the deck presses in as you go.</div>
+
+    <a href="Keepix Soft UI.dc.html" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 17px;border-radius:16px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#8C84FF;font:700 12px/1 'DM Sans',sans-serif;text-decoration:none;min-height:44px;box-sizing:border-box"><span>Switch to light mode</span><span style="font:400 15px/1 'DM Sans',sans-serif">→</span></a>
+
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.16em;color:#9AA3B2;text-transform:uppercase;margin-bottom:2px">Screens</div>
+      <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="12">
+        <button type="button" onClick="{{ nav.go }}" style="display:flex;align-items:center;gap:12px;text-align:left;padding:12px 15px;border-radius:16px;border:none;background:#262A33;box-shadow:{{ nav.shadow }};color:{{ nav.color }};font:700 13px/1.2 'DM Sans',sans-serif;cursor:pointer;transition:box-shadow .3s ease-out,transform .3s ease-out,color .3s ease-out;min-height:44px;box-sizing:border-box">
+          <span style="width:16px;font:700 10px/1 'Plus Jakarta Sans',sans-serif;color:#9AA3B2">{{ nav.num }}</span>
+          <span>{{ nav.label }}</span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.16em;color:#9AA3B2;text-transform:uppercase;margin-bottom:2px">Changes</div>
+      <sc-for list="{{ changeItems }}" as="ch" hint-placeholder-count="7">
+        <button type="button" onClick="{{ ch.go }}" style="display:flex;align-items:flex-start;gap:11px;text-align:left;padding:13px 15px;border-radius:16px;border:none;background:#262A33;box-shadow:{{ ch.shadow }};cursor:pointer;transition:box-shadow .3s ease-out;min-height:44px;box-sizing:border-box">
+          <span style="width:7px;height:7px;flex:none;border-radius:50%;margin-top:4px;background:{{ ch.dot }};box-shadow:inset 1px 1px 2px rgba(0,0,0,0.2)"></span>
+          <span style="min-width:0">
+            <span style="display:block;font:700 12px/1.3 'DM Sans',sans-serif;color:{{ ch.color }}">{{ ch.title }}</span>
+            <span style="display:block;font:400 10.5px/1.45 'DM Sans',sans-serif;color:#9AA3B2;margin-top:3px;text-wrap:pretty">{{ ch.note }}</span>
+          </span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="padding:22px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;flex-direction:column;gap:14px">
+      <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.16em;color:#9AA3B2;text-transform:uppercase">Gestures</div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div style="display:flex;align-items:center;gap:13px">
+          <span style="width:38px;height:38px;flex:none;border-radius:12px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 15px/1 'DM Sans',sans-serif;color:#4FD1C5">→</span>
+          <span style="font:500 12.5px/1.35 'DM Sans',sans-serif;color:#E7EBF2">Keep</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:13px">
+          <span style="width:38px;height:38px;flex:none;border-radius:12px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 15px/1 'DM Sans',sans-serif;color:#E09A90">←</span>
+          <span style="font:500 12.5px/1.35 'DM Sans',sans-serif;color:#E7EBF2">Bin · recoverable</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:13px">
+          <span style="width:38px;height:38px;flex:none;border-radius:12px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 15px/1 'DM Sans',sans-serif;color:#8C84FF">↓</span>
+          <span style="font:500 12.5px/1.35 'DM Sans',sans-serif;color:#E7EBF2">Shrink in background</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:13px">
+          <span style="width:38px;height:38px;flex:none;border-radius:12px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 11px/1 'DM Sans',sans-serif;color:#9AA3B2">tap</span>
+          <span style="font:500 12.5px/1.35 'DM Sans',sans-serif;color:#E7EBF2">Fullscreen</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:none;padding:26px;border-radius:44px;background:#262A33;box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051)">
+  <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+    <div style="position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;background:#262A33;font-family:'DM Sans',system-ui,sans-serif">
+
+      <sc-if value="{{ isPermission }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:26px 22px 30px;box-sizing:border-box;background:#262A33">
+          <div style="position:absolute;top:56px;left:22px;right:22px;display:flex;gap:14px;justify-content:center">
+            <div style="width:78px;height:104px;border-radius:16px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);transform:rotate(-7deg)"></div>
+            <div style="width:78px;height:104px;border-radius:16px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);animation:float 3s ease-in-out infinite"></div>
+            <div style="width:78px;height:104px;border-radius:16px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);transform:rotate(7deg)"></div>
+          </div>
+          <div style="font:800 30px/1.15 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;margin-bottom:12px;text-wrap:pretty">Let's clear some space together</div>
+          <div style="font:400 14.5px/1.6 'DM Sans',sans-serif;color:#9AA3B2;margin-bottom:22px;text-wrap:pretty">Keepix needs to see your photos and videos to show them as cards. Nothing leaves your phone, and nothing is deleted without your say.</div>
+          <div style="padding:20px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;flex-direction:column;gap:14px;margin-bottom:20px">
+            <div style="display:flex;align-items:center;gap:13px">
+              <span style="width:34px;height:34px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 13px/1 'DM Sans',sans-serif;color:#4FD1C5">✓</span>
+              <span style="font:500 12.5px/1.45 'DM Sans',sans-serif;color:#E7EBF2">Photos &amp; video — read access</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:13px">
+              <span style="width:34px;height:34px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 13px/1 'DM Sans',sans-serif;color:#4FD1C5">✓</span>
+              <span style="font:500 12.5px/1.45 'DM Sans',sans-serif;color:#E7EBF2">Write only when you restore or delete</span>
+            </div>
+          </div>
+          <button type="button" onClick="{{ grant }}" style="padding:17px;border-radius:16px;border:none;background:#8C84FF;color:#fff;font:700 15px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transition:transform .3s ease-out,box-shadow .3s ease-out" style-hover="transform:translateY(-1px);box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051)" style-active="transform:translateY(0.5px);box-shadow:inset 3px 3px 6px rgba(0,0,0,0.24),inset -3px -3px 6px rgba(255,255,255,0.020)">Allow access</button>
+          <button type="button" onClick="{{ grant }}" style="margin-top:12px;padding:15px;border-radius:16px;border:none;background:#262A33;color:#9AA3B2;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">Not now</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isOnboarding }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;padding:24px 22px 28px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:18px;background:#262A33">
+          <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.18em;color:#9AA3B2;text-transform:uppercase">One quick thing</div>
+          <div style="font:800 27px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;text-wrap:pretty">Three directions. That's the whole app.</div>
+          <div style="display:flex;flex-direction:column;gap:14px;margin-top:4px">
+            <div style="display:flex;align-items:center;gap:16px;padding:18px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+              <div style="width:48px;height:48px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center;font:700 19px/1 'DM Sans',sans-serif;color:#4FD1C5">→</div>
+              <div><div style="font:700 14.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Swipe right to keep</div><div style="font:400 12px/1.45 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">Nothing happens to the file.</div></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;padding:18px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+              <div style="width:48px;height:48px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center;font:700 19px/1 'DM Sans',sans-serif;color:#E09A90">←</div>
+              <div><div style="font:700 14.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Swipe left to bin</div><div style="font:400 12px/1.45 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">Sits in the bin for 10 days. Restore anytime.</div></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;padding:18px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+              <div style="width:48px;height:48px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center;font:700 19px/1 'DM Sans',sans-serif;color:#8C84FF">↓</div>
+              <div><div style="font:700 14.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Swipe down to shrink</div><div style="font:400 12px/1.45 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">Keeps the photo, compresses it in the background.</div></div>
+            </div>
+          </div>
+          <button type="button" onClick="{{ startSwiping }}" style="margin-top:12px;padding:17px;border-radius:16px;border:none;background:#8C84FF;color:#fff;font:700 15px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">Start with 50 photos</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;background:#262A33">
+
+          <div style="flex:none;padding:14px 16px 4px;display:flex;align-items:center;gap:10px">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 15px 9px 11px;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">
+              <span style="font:700 13px/1 'DM Sans',sans-serif;color:#8C84FF">◆</span>
+              <span style="font:800 13px/1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">{{ streak }}</span>
+              <span style="font:500 11px/1 'DM Sans',sans-serif;color:#9AA3B2">day streak</span>
+            </div>
+            <div style="flex:1"></div>
+            <sc-if value="{{ queueActive }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-radius:9999px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                <span style="width:8px;height:8px;border-radius:50%;background:#8C84FF;flex:none"></span>
+                <span style="font:700 11.5px/1 'DM Sans',sans-serif;color:#E7EBF2">Shrinking {{ queueCount }}</span>
+              </div>
+            </sc-if>
+            <button type="button" onClick="{{ goLibrary }}" aria-label="Library" style="width:44px;height:44px;flex:none;border-radius:9999px;background:#262A33;border:none;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#9AA3B2;font:600 15px/1 'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:box-shadow .3s ease-out" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">
+              <span style="display:grid;grid-template-columns:repeat(2,5px);grid-template-rows:repeat(2,5px);gap:3px"><span style="background:#9AA3B2;border-radius:1.5px"></span><span style="background:#9AA3B2;border-radius:1.5px"></span><span style="background:#9AA3B2;border-radius:1.5px"></span><span style="background:#9AA3B2;border-radius:1.5px"></span></span>
+            </button>
+          </div>
+
+          <sc-if value="{{ tabSwipe }}" hint-placeholder-val="{{ true }}">
+            <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+
+              <sc-if value="{{ showRing }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:none;padding:8px 18px 2px;display:flex;align-items:center;gap:13px">
+                  <div style="width:46px;height:46px;flex:none;border-radius:50%;padding:4px;box-sizing:border-box;background:conic-gradient(#8C84FF {{ pctDeg }}, #262A33 0);box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                    <div style="width:100%;height:100%;border-radius:50%;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:800 12px/1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">{{ doneCount }}</div>
+                  </div>
+                  <div style="flex:1;min-width:0">
+                    <div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">{{ batchLabel }}</div>
+                    <div style="font:400 11.5px/1.35 'DM Sans',sans-serif;color:#9AA3B2;margin-top:3px">{{ preloadNote }}</div>
+                  </div>
+                  <sc-if value="{{ undoOn }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" onClick="{{ doUndo }}" aria-label="Undo {{ undoWhat }}" style="position:relative;width:46px;height:46px;flex:none;padding:0;border:none;border-radius:50%;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);cursor:pointer;animation:kx-pop .25s ease-out" style-active="box-shadow:inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.043)">
+                      <span style="position:absolute;inset:0;border-radius:50%;background:conic-gradient(#8C84FF {{ undoDeg }}, rgba(0,0,0,0.21) 0);transition:background .1s linear"></span>
+                      <span style="position:absolute;inset:4px;border-radius:50%;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.52),inset -3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:600 17px/1 'DM Sans',sans-serif;color:#8C84FF">↺</span>
+                    </button>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{ showBar }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;padding:10px 18px 4px;display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;justify-content:space-between;font:700 11.5px/1 'DM Sans',sans-serif;color:#9AA3B2"><span>{{ batchLabel }}</span><span>{{ pctLabel }}</span></div>
+                  <div style="height:12px;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);padding:3px;box-sizing:border-box"><div style="height:100%;border-radius:9999px;background:#8C84FF;width:{{ pctLabel }}"></div></div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ showCounter }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;padding:10px 18px 4px;font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#9AA3B2">{{ counterLabel }}</div>
+              </sc-if>
+
+              <div style="flex:1;position:relative;margin:12px 22px 4px;min-height:0" onPointerDown="{{ onDown }}" onPointerMove="{{ onMove }}" onPointerUp="{{ onUp }}" onPointerCancel="{{ onUp }}">
+                <sc-for list="{{ cards }}" as="card" hint-placeholder-count="3">
+                  <div style="position:absolute;inset:0;border-radius:32px;background:#262A33;box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051);padding:12px;box-sizing:border-box;transform:{{ card.transform }};opacity:{{ card.opacity }};z-index:{{ card.z }};transition:{{ card.transition }};touch-action:none;cursor:grab">
+                    <div style="position:relative;height:100%;border-radius:24px;overflow:hidden;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051)">
+                      <img src="{{ card.src }}" alt="" draggable="false" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;user-select:none">
+                      <div style="position:absolute;inset:0;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.47),inset -10px -10px 20px rgba(255,255,255,0.030);border-radius:24px;pointer-events:none"></div>
+                      <sc-if value="{{ card.isVideo }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:9999px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                          <span style="width:0;height:0;border-left:7px solid #8C84FF;border-top:4.5px solid transparent;border-bottom:4.5px solid transparent"></span>
+                          <span style="font:700 11px/1 'DM Sans',sans-serif;color:#E7EBF2">{{ card.dur }}</span>
+                        </div>
+                      </sc-if>
+                      <div style="position:absolute;bottom:12px;left:12px;right:12px;padding:13px 15px;border-radius:16px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);display:flex;align-items:center;gap:12px">
+                        <div style="flex:1;min-width:0">
+                          <div style="font:700 13.5px/1.25 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ card.name }}</div>
+                          <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ card.meta }}</div>
+                        </div>
+                        <div style="flex:none;padding:7px 11px;border-radius:12px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);font:700 10.5px/1 'DM Sans',sans-serif;color:#E7EBF2">{{ card.size }}</div>
+                      </div>
+                      <div style="position:absolute;inset:0;background:rgba(56,178,172,0.38);opacity:{{ card.keepOp }};transition:opacity .1s;display:flex;align-items:center;justify-content:center;border-radius:24px">
+                        <div style="padding:16px 26px;border-radius:16px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transform:rotate(-9deg);font:800 22px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.04em;color:#2C8C87">KEEP</div>
+                      </div>
+                      <div style="position:absolute;inset:0;background:rgba(196,102,92,0.36);opacity:{{ card.delOp }};transition:opacity .1s;display:flex;align-items:center;justify-content:center;border-radius:24px">
+                        <div style="padding:16px 26px;border-radius:16px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transform:rotate(9deg);font:800 22px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.04em;color:#D98A80">BIN</div>
+                      </div>
+                      <div style="position:absolute;inset:0;background:rgba(108,99,255,0.34);opacity:{{ card.compOp }};transition:opacity .1s;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border-radius:24px">
+                        <div style="width:64px;height:64px;border-radius:50%;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center;font:700 24px/1 'DM Sans',sans-serif;color:#8C84FF">↓</div>
+                        <div style="padding:12px 20px;border-radius:16px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);text-align:center">
+                          <div style="font:800 15px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.04em;color:#E7EBF2">SHRINK IT</div>
+                          <div style="font:500 11px/1 'DM Sans',sans-serif;color:#9AA3B2;margin-top:6px">{{ card.shrinkHint }}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="flex:none;padding:14px 20px 8px;display:flex;align-items:center;justify-content:center;gap:16px">
+                <button type="button" onClick="{{ actDelete }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#E09A90;font:600 22px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out,box-shadow .3s ease-out" style-hover="transform:translateY(-1px);box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051)" style-active="transform:translateY(0.5px);box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✕</button>
+                <button type="button" onClick="{{ actFavorite }}" aria-pressed="{{ favorited }}" style="width:46px;height:46px;border-radius:9999px;border:none;background:#262A33;box-shadow:{{ favShadow }};color:{{ favColor }};font:400 19px/1 'DM Sans',sans-serif;cursor:pointer;transition:box-shadow .3s ease-out,color .3s ease-out" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">{{ favGlyph }}</button>
+                <button type="button" onClick="{{ actCompress }}" style="width:56px;height:56px;border-radius:9999px;border:none;background:#8C84FF;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#fff;font:600 21px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px);box-shadow:inset 6px 6px 10px rgba(0,0,0,0.24),inset -6px -6px 10px rgba(255,255,255,0.019)">↓</button>
+                <button type="button" onClick="{{ actKeep }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#4FD1C5;font:600 22px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out,box-shadow .3s ease-out" style-hover="transform:translateY(-1px);box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051)" style-active="transform:translateY(0.5px);box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✓</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabBin }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;overflow:auto;padding:8px 18px 14px;min-height:0">
+              <div style="display:flex;align-items:baseline;gap:10px;margin:6px 0 6px">
+                <div style="font:800 25px/1.1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em">Bin</div>
+                <div style="font:500 12px/1 'DM Sans',sans-serif;color:#9AA3B2">{{ binCount }} items · {{ binSize }}</div>
+                <sc-if value="{{ binHasItems }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ toggleSelMode }}" style="margin-left:auto;min-height:44px;padding:12px 15px;border-radius:14px;border:none;background:#262A33;box-shadow:{{ selBtnShadow }};color:{{ selBtnColor }};font:700 11.5px/1 'DM Sans',sans-serif;cursor:pointer;transition:box-shadow .3s ease-out,color .3s ease-out">{{ selBtnLabel }}</button>
+                </sc-if>
+              </div>
+              <div style="font:400 12.5px/1.55 'DM Sans',sans-serif;color:#9AA3B2;margin-bottom:16px;text-wrap:pretty">{{ binNote }}</div>
+              <sc-if value="{{ binEmpty }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:46px 22px;border-radius:32px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);text-align:center">
+                  <div style="font:700 15px/1.3 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;margin-bottom:7px">Bin's empty</div>
+                  <div style="font:400 12.5px/1.5 'DM Sans',sans-serif;color:#9AA3B2">Anything you swipe left lands here first.</div>
+                </div>
+              </sc-if>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+                <sc-for list="{{ bin }}" as="b" hint-placeholder-count="6">
+                  <button type="button" onClick="{{ b.open }}" onPointerDown="{{ b.hold }}" onPointerUp="{{ b.unhold }}" onPointerLeave="{{ b.unhold }}" onPointerCancel="{{ b.unhold }}" onContextMenu="{{ noCtx }}" style="position:relative;padding:7px;border:none;border-radius:20px;aspect-ratio:3/4;background:#262A33;box-shadow:{{ b.shadow }};cursor:pointer;transition:transform .3s ease-out,box-shadow .3s ease-out" style-hover="transform:translateY(-2px)">
+                    <div style="position:relative;height:100%;border-radius:14px;overflow:hidden;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">
+                      <img src="{{ b.src }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+                      <div style="position:absolute;bottom:5px;left:5px;right:5px;padding:4px 6px;border-radius:8px;background:#262A33;font:700 9px/1.2 'DM Sans',sans-serif;color:{{ b.dayColor }};text-align:center">{{ b.dayLabel }}</div>
+                      <sc-if value="{{ b.selMode }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:{{ b.checkBg }};box-shadow:2px 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font:700 12px/1 'DM Sans',sans-serif;color:{{ b.checkColor }}">{{ b.checkGlyph }}</div>
+                      </sc-if>
+                    </div>
+                  </button>
+                </sc-for>
+              </div>
+              <sc-if value="{{ selMode }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:11px;margin-top:18px">
+                  <div style="display:flex;align-items:center;gap:10px;padding:13px 15px;border-radius:16px;background:#262A33;box-shadow:inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.043)">
+                    <span style="font:700 12px/1 'DM Sans',sans-serif;color:{{ selCountColor }}">{{ selCountLabel }}</span>
+                    <button type="button" onClick="{{ toggleSelAll }}" style="margin-left:auto;min-height:44px;padding:11px 14px;border-radius:13px;border:none;background:#262A33;box-shadow:4px 4px 9px rgba(0,0,0,0.57),-4px -4px 9px rgba(255,255,255,0.043);color:#8C84FF;font:700 11px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">{{ selAllLabel }}</button>
+                  </div>
+                  <div style="display:flex;gap:12px">
+                    <button type="button" onClick="{{ restoreSel }}" disabled="{{ selNone }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:{{ restoreSelBg }};box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:{{ restoreSelColor }};font:700 13px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;min-height:44px;transition:background .25s ease-out,color .25s ease-out">Restore</button>
+                    <button type="button" onClick="{{ deleteSel }}" disabled="{{ selNone }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:{{ deleteSelColor }};font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px;transition:color .25s ease-out" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Delete now</button>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ binBulkPlain }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;gap:12px;margin-top:18px">
+                  <button type="button" onClick="{{ restoreAll }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#E7EBF2;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Restore all</button>
+                  <button type="button" onClick="{{ emptyBin }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#D98A80;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Empty bin</button>
+                </div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabSmall }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;overflow:auto;padding:8px 18px 14px;min-height:0">
+              <div style="font:800 25px/1.1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;margin:6px 0 14px">Compressed</div>
+              <div style="padding:24px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);margin-bottom:16px;display:flex;align-items:center;gap:20px">
+                <div style="width:74px;height:74px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center">
+                  <div style="width:34px;height:34px;border-radius:9999px;background:#8C84FF;box-shadow:3px 3px 6px rgba(0,0,0,0.57);display:flex;align-items:center;justify-content:center;color:#fff;font:700 15px/1 'DM Sans',sans-serif">↓</div>
+                </div>
+                <div style="flex:1">
+                  <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.16em;color:#9AA3B2;text-transform:uppercase">Saved so far</div>
+                  <div style="font:800 32px/1.05 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.04em;margin:8px 0 5px">{{ savedTotal }}</div>
+                  <div style="font:400 12px/1.4 'DM Sans',sans-serif;color:#9AA3B2">{{ smallCount }} files shrunk, all still on your phone.</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <sc-for list="{{ compressed }}" as="c" hint-placeholder-count="4">
+                  <div style="display:flex;align-items:center;gap:14px;padding:12px;border-radius:24px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                    <div style="width:52px;height:62px;flex:none;border-radius:14px;overflow:hidden;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);position:relative">
+                      <img src="{{ c.src }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+                    </div>
+                    <div style="flex:1;min-width:0">
+                      <div style="font:700 13px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.name }}</div>
+                      <div style="display:flex;align-items:center;gap:7px;margin-top:6px;font:500 11px/1 'DM Sans',sans-serif">
+                        <span style="color:#9AA3B2;text-decoration:line-through">{{ c.before }}</span>
+                        <span style="color:#9AA3B2">→</span>
+                        <span style="color:#2C8C87;font-weight:700">{{ c.after }}</span>
+                      </div>
+                    </div>
+                    <div style="flex:none;padding:7px 11px;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);font:700 9.5px/1 'Plus Jakarta Sans',sans-serif;color:#8C84FF;letter-spacing:0.08em">{{ c.tier }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabRank }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;overflow:auto;padding:8px 18px 14px;min-height:0">
+              <div style="font:800 25px/1.1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;margin:6px 0 14px">This week</div>
+              <div style="padding:22px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);margin-bottom:16px;display:flex;align-items:center;gap:18px">
+                <div style="width:76px;height:76px;flex:none;border-radius:50%;padding:5px;box-sizing:border-box;background:conic-gradient(#8C84FF {{ streakDeg }}, #262A33 0);box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                  <div style="width:100%;height:100%;border-radius:50%;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;flex-direction:column;align-items:center;justify-content:center">
+                    <span style="font:800 21px/1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">{{ streak }}</span>
+                    <span style="font:700 8px/1 'Plus Jakarta Sans',sans-serif;color:#9AA3B2;letter-spacing:0.1em">DAYS</span>
+                  </div>
+                </div>
+                <div style="flex:1">
+                  <div style="font:700 14.5px/1.25 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;text-wrap:pretty">{{ streakHeadline }}</div>
+                  <div style="font:400 12px/1.45 'DM Sans',sans-serif;color:#9AA3B2;margin-top:6px">{{ streakSub }}</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <sc-for list="{{ friends }}" as="f" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:24px;background:#262A33;box-shadow:{{ f.shadow }}">
+                    <span style="width:18px;font:800 12px/1 'Plus Jakarta Sans',sans-serif;color:{{ f.rankColor }}">{{ f.rank }}</span>
+                    <span style="width:36px;height:36px;flex:none;border-radius:9999px;background:{{ f.avatarBg }};box-shadow:3px 3px 6px rgba(0,0,0,0.57),-3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;font:700 13px/1 'Plus Jakarta Sans',sans-serif;color:{{ f.avatarColor }}">{{ f.initial }}</span>
+                    <span style="flex:1;font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">{{ f.name }}</span>
+                    <span style="font:500 12px/1 'DM Sans',sans-serif;color:#9AA3B2">{{ f.score }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="margin-top:16px;padding:18px;border-radius:24px;background:#262A33;box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043);display:flex;align-items:center;gap:14px">
+                <div style="flex:1"><div style="font:700 13px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Invite a friend</div><div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">Only your weekly count is shared.</div></div>
+                <div style="flex:none;padding:10px 13px;border-radius:12px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);font:700 12px/1 'Plus Jakarta Sans',sans-serif;color:#8C84FF;letter-spacing:0.1em">KPX-7J4</div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabSettings }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;overflow:auto;padding:8px 18px 14px;min-height:0">
+              <div style="font:800 25px/1.1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;margin:6px 0 16px">Settings</div>
+
+              <div style="padding:22px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);margin-bottom:16px">
+                <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+                  <span style="font:700 14.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Bin retention</span>
+                  <span style="font:800 15px/1 'Plus Jakarta Sans',sans-serif;color:#8C84FF">{{ retentionLabel }}</span>
+                </div>
+                <div style="font:400 12px/1.55 'DM Sans',sans-serif;color:#9AA3B2;margin-bottom:16px;min-height:38px;text-wrap:pretty">{{ retentionNote }}</div>
+                <div style="position:relative;border-radius:20px;background:#262A33;box-shadow:inset 6px 6px 12px rgba(0,0,0,0.62),inset -6px -6px 12px rgba(255,255,255,0.051);padding:0 10px">
+                  <div style="position:absolute;left:12px;right:12px;top:42px;height:42px;border-radius:13px;background:#262A33;box-shadow:4px 4px 9px rgba(0,0,0,0.52),-4px -4px 9px rgba(255,255,255,0.051);pointer-events:none"></div>
+                  <div ref="{{ wheelRef }}" onScroll="{{ onWheelScroll }}" style="position:relative;box-sizing:border-box;height:126px;overflow-y:auto;scroll-snap-type:y mandatory;padding:42px 0;scrollbar-width:none;-webkit-mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent)">
+                    <sc-for list="{{ retentionOpts }}" as="o" hint-placeholder-count="4">
+                      <div onClick="{{ o.pick }}" style="height:42px;display:flex;align-items:center;justify-content:center;scroll-snap-align:center;cursor:pointer;font:{{ o.font }};color:{{ o.color }};opacity:{{ o.op }};transition:opacity .2s ease-out,color .2s ease-out">{{ o.label }}</div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <div style="padding:22px;border-radius:32px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);margin-bottom:16px">
+                <div style="font:700 14.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;margin-bottom:6px">Compression strength</div>
+                <div style="font:400 12px/1.55 'DM Sans',sans-serif;color:#9AA3B2;margin-bottom:15px">{{ qualityNote }}</div>
+                <div style="display:flex;gap:11px">
+                  <sc-for list="{{ qualities }}" as="q" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ q.pick }}" style="flex:1;padding:15px 8px;border-radius:16px;border:none;background:#262A33;box-shadow:{{ q.shadow }};color:{{ q.color }};font:700 12.5px/1.2 'Plus Jakarta Sans',sans-serif;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;min-height:44px;transition:box-shadow .3s ease-out">
+                      <span>{{ q.name }}</span>
+                      <span style="font:500 9.5px/1 'DM Sans',sans-serif;color:#9AA3B2">{{ q.tag }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+
+              <sc-if value="{{ notPro }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ openPaywall }}" style="width:100%;text-align:left;padding:22px;border-radius:32px;border:none;background:#8C84FF;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);cursor:pointer;margin-bottom:16px;transition:transform .3s ease-out" style-hover="transform:translateY(-2px)">
+                  <div style="font:800 16px/1.2 'Plus Jakarta Sans',sans-serif;color:#fff">Keepix Pro</div>
+                  <div style="font:400 12px/1.55 'DM Sans',sans-serif;color:rgba(255,255,255,0.78);margin-top:6px">Unlimited shrinking, Balanced &amp; Max strength. {{ freeLeftLabel }}</div>
+                </button>
+              </sc-if>
+
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;gap:14px;padding:18px;border-radius:24px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                  <div style="flex:1"><div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Friends &amp; leaderboard</div><div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ accountNote }}</div></div>
+                  <button type="button" onClick="{{ toggleAccount }}" style="width:56px;height:30px;flex:none;border-radius:9999px;border:none;background:{{ accountTrack }};box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);cursor:pointer;position:relative;padding:0">
+                    <span style="position:absolute;top:3px;left:{{ accountKnob }};width:24px;height:24px;border-radius:50%;background:#262A33;box-shadow:3px 3px 6px rgba(0,0,0,0.57),-3px -3px 6px rgba(255,255,255,0.043);transition:left .3s ease-out"></span>
+                  </button>
+                </div>
+                <div style="padding:18px;border-radius:24px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                  <div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Sort order</div>
+                  <div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">Date taken · newest first</div>
+                </div>
+                <div style="padding:18px;border-radius:24px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)">
+                  <div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2">Batch size</div>
+                  <div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">50 cards, next batch preloads at card 40</div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showChromeBar }}" hint-placeholder-val="{{ true }}">
+            <div style="flex:none;margin:6px 12px 12px;padding:8px 6px;border-radius:24px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;gap:4px">
+              <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="5">
+                <button type="button" onClick="{{ t.go }}" style="flex:1;padding:8px 2px;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;min-height:44px">
+                  <span style="width:34px;height:34px;border-radius:12px;background:#262A33;box-shadow:{{ t.shadow }};display:flex;align-items:center;justify-content:center;font:700 13px/1 'DM Sans',sans-serif;color:{{ t.color }};transition:box-shadow .3s ease-out">{{ t.glyph }}</span>
+                  <span style="font:700 9.5px/1 'Plus Jakarta Sans',sans-serif;color:{{ t.labelColor }}">{{ t.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSummary }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;padding:26px 22px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:16px;background:#262A33">
+          <div style="font:700 10px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:0.18em;color:#9AA3B2;text-transform:uppercase">Batch cleared</div>
+          <div style="font:800 28px/1.15 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;text-wrap:pretty">Nice run — 50 photos sorted.</div>
+          <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
+            <div style="padding:18px 20px;border-radius:24px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:space-between">
+              <span style="font:500 13px/1.2 'DM Sans',sans-serif;color:#9AA3B2">Space freed</span>
+              <span style="font:800 21px/1 'Plus Jakarta Sans',sans-serif;color:#D98A80">{{ freedLabel }}</span>
+            </div>
+            <div style="padding:18px 20px;border-radius:24px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:space-between">
+              <span style="font:500 13px/1.2 'DM Sans',sans-serif;color:#9AA3B2">Saved by shrinking</span>
+              <span style="font:800 21px/1 'Plus Jakarta Sans',sans-serif;color:#8C84FF">{{ savedTotal }}</span>
+            </div>
+            <div style="padding:18px 20px;border-radius:24px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:space-between">
+              <span style="font:500 13px/1.2 'DM Sans',sans-serif;color:#9AA3B2">Streak</span>
+              <span style="font:800 21px/1 'Plus Jakarta Sans',sans-serif;color:#2C8C87">{{ streakLabel }}</span>
+            </div>
+          </div>
+          <div style="font:400 12.5px/1.55 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px;text-wrap:pretty">{{ summaryNote }}</div>
+          <button type="button" onClick="{{ nextBatch }}" style="margin-top:6px;padding:17px;border-radius:16px;border:none;background:#8C84FF;color:#fff;font:700 15px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">Next 50 photos</button>
+          <button type="button" onClick="{{ goEmpty }}" style="padding:15px;border-radius:16px;border:none;background:#262A33;color:#9AA3B2;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">I'm done for today</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;background:#262A33">
+          <div style="flex:1;overflow:auto;padding:16px 18px 22px;min-height:0">
+
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+              <button type="button" onClick="{{ backToSwipe }}" aria-label="Back" style="width:44px;height:44px;flex:none;border-radius:9999px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#E7EBF2;font:600 16px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">←</button>
+              <div style="font:800 23px/1.1 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em">Library</div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:14px;padding:16px;border-radius:28px;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+              <div style="width:56px;height:56px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 8px 8px 15px rgba(0,0,0,0.66),inset -8px -8px 15px rgba(255,255,255,0.051);display:flex;align-items:center;justify-content:center;font:600 21px/1 'DM Sans',sans-serif;color:{{ libIconColor }}">{{ libIcon }}</div>
+              <div style="min-width:0">
+                <div style="font:800 17px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.02em">{{ libTitle }}</div>
+                <div style="font:400 11.5px/1.5 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px;text-wrap:pretty">{{ libNote }}</div>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;margin:18px 0 14px">
+              <button type="button" onClick="{{ toggleLibSelMode }}" style="flex:none;min-height:44px;padding:12px 15px;border-radius:14px;border:none;background:#262A33;box-shadow:{{ libSelBtnShadow }};color:{{ libSelBtnColor }};font:700 11.5px/1 'DM Sans',sans-serif;cursor:pointer;transition:box-shadow .3s ease-out,color .3s ease-out">{{ libSelBtnLabel }}</button>
+              <div style="flex:1;display:flex;gap:8px;padding:5px;border-radius:9999px;background:#262A33;box-shadow:inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.047)">
+                <sc-for list="{{ sortOpts }}" as="o" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ o.pick }}" style="flex:1;min-height:44px;border:none;border-radius:9999px;background:#262A33;cursor:pointer;font:700 11.5px/1 'DM Sans',sans-serif;box-shadow:{{ o.shadow }};color:{{ o.color }};transition:box-shadow .25s ease-out,color .25s ease-out">{{ o.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+
+            <sc-for list="{{ libMonths }}" as="m" hint-placeholder-count="3">
+              <div style="margin-bottom:22px">
+                <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+                  <span style="font:800 15px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.02em">{{ m.label }}</span>
+                  <span style="font:500 11px/1 'DM Sans',sans-serif;color:#9AA3B2">{{ m.sub }}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:11px">
+                  <sc-for list="{{ m.items }}" as="p" hint-placeholder-count="6">
+                    <div onClick="{{ p.open }}" onPointerDown="{{ p.hold }}" onPointerUp="{{ p.unhold }}" onPointerLeave="{{ p.unhold }}" onPointerCancel="{{ p.unhold }}" onContextMenu="{{ noCtx }}" style="padding:7px;border-radius:20px;background:#262A33;box-shadow:{{ p.shadow }};cursor:pointer;transition:transform .25s ease-out,box-shadow .25s ease-out" style-active="transform:scale(0.97)">
+                      <div style="position:relative;border-radius:14px;background:#262A33;box-shadow:inset 5px 5px 10px rgba(0,0,0,0.66),inset -5px -5px 10px rgba(255,255,255,0.051);padding:4px">
+                        <img src="{{ p.src }}" alt="" style="display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:11px">
+                        <sc-if value="{{ p.selMode }}" hint-placeholder-val="{{ false }}">
+                          <div style="position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:50%;background:{{ p.checkBg }};box-shadow:2px 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font:700 12px/1 'DM Sans',sans-serif;color:{{ p.checkColor }}">{{ p.checkGlyph }}</div>
+                        </sc-if>
+                        <sc-if value="{{ p.isVideo }}" hint-placeholder-val="{{ false }}">
+                          <span style="position:absolute;right:8px;bottom:8px;padding:3px 7px;border-radius:9999px;background:rgba(18,20,25,0.92);font:700 9px/1 'DM Sans',sans-serif;color:#E7EBF2">{{ p.dur }}</span>
+                        </sc-if>
+                      </div>
+                      <div style="font:700 10.5px/1 'DM Sans',sans-serif;color:#8C84FF;text-align:center;padding:7px 0 2px">{{ p.size }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+
+            <sc-if value="{{ libSelMode }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:11px;margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:10px;padding:13px 15px;border-radius:16px;background:#262A33;box-shadow:inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.043)">
+                  <span style="font:700 12px/1 'DM Sans',sans-serif;color:{{ libSelCountColor }}">{{ libSelCountLabel }}</span>
+                  <button type="button" onClick="{{ toggleLibSelAll }}" style="margin-left:auto;min-height:44px;padding:11px 14px;border-radius:13px;border:none;background:#262A33;box-shadow:4px 4px 9px rgba(0,0,0,0.57),-4px -4px 9px rgba(255,255,255,0.043);color:#8C84FF;font:700 11px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">{{ libSelAllLabel }}</button>
+                </div>
+                <div style="display:flex;gap:11px">
+                  <button type="button" onClick="{{ libShrinkSel }}" disabled="{{ libSelNone }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:{{ libShrinkSelBg }};box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:{{ libShrinkSelColor }};font:700 13px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;min-height:44px;transition:background .25s ease-out,color .25s ease-out">Shrink</button>
+                  <button type="button" onClick="{{ libBinSel }}" disabled="{{ libSelNone }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:{{ libBinSelColor }};font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px;transition:color .25s ease-out" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Move to bin</button>
+                </div>
+              </div>
+            </sc-if>
+            <button type="button" onClick="{{ goBin }}" style="width:100%;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#E7EBF2;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Review the bin</button>
+          </div>
+
+          <sc-if value="{{ libOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:0;background:rgba(18,20,25,0.82);backdrop-filter:blur(6px);display:flex;flex-direction:column;justify-content:flex-end;animation:{{ fadeAnim }}">
+              <div onClick="{{ closeLib }}" style="flex:1;cursor:pointer"></div>
+              <div style="flex:none;padding:10px 18px 24px;border-radius:36px 36px 0 0;background:#262A33;box-shadow:0 -10px 24px rgba(0,0,0,0.47),inset 0 2px 0 rgba(255,255,255,0.051);display:flex;flex-direction:column;gap:16px;animation:{{ sheetAnim }};transform:{{ sheetShift }};transition:{{ sheetTrans }};touch-action:none;will-change:transform" onPointerDown="{{ sheetDown }}" onPointerMove="{{ sheetMove }}" onPointerUp="{{ sheetUp }}" onPointerCancel="{{ sheetUp }}">
+                <div style="align-self:center;width:46px;height:5px;border-radius:9999px;background:#262A33;box-shadow:inset 2px 2px 4px rgba(0,0,0,0.76),inset -2px -2px 4px rgba(255,255,255,0.059);margin-bottom:2px"></div>
+                <button type="button" onClick="{{ openLibFull }}" aria-label="View full screen" style="display:block;width:100%;padding:10px;box-sizing:border-box;border:none;border-radius:26px;background:#262A33;box-shadow:inset 8px 8px 16px rgba(0,0,0,0.66),inset -8px -8px 16px rgba(255,255,255,0.051);cursor:pointer">
+                  <img src="{{ libSelSrc }}" alt="" style="display:block;width:100%;height:212px;object-fit:cover;border-radius:18px;box-shadow:6px 6px 12px rgba(0,0,0,0.47),-6px -6px 12px rgba(255,255,255,0.043)">
+                </button>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="min-width:0;flex:1">
+                    <div style="font:700 14px/1.25 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ libSelName }}</div>
+                    <div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ libSelMeta }}</div>
+                  </div>
+                  <button type="button" onClick="{{ openLibFull }}" style="flex:none;min-height:44px;padding:11px 15px;border-radius:14px;border:none;background:#262A33;box-shadow:4px 4px 9px rgba(0,0,0,0.52),-4px -4px 9px rgba(255,255,255,0.047);color:#8C84FF;font:700 10.5px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">Full screen</button>
+                  <button type="button" onClick="{{ closeLib }}" aria-label="Close" style="width:44px;height:44px;flex:none;border-radius:9999px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#9AA3B2;font:600 15px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">✕</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:center;gap:16px">
+                  <button type="button" onClick="{{ libBin }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#D98A80;font:600 20px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out" style-active="transform:translateY(0.5px);box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✕</button>
+                  <button type="button" onClick="{{ libShrink }}" style="width:56px;height:56px;border-radius:9999px;border:none;background:#8C84FF;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#fff;font:600 21px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">↓</button>
+                  <button type="button" onClick="{{ libKeep }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#4FD1C5;font:600 22px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out" style-active="transform:translateY(0.5px);box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✓</button>
+                </div>
+                <div style="display:flex;justify-content:center;gap:34px;font:500 10.5px/1 'DM Sans',sans-serif;color:#9AA3B2"><span>Bin</span><span>Shrink</span><span>Keep</span></div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ libFullOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:0;z-index:8;background:#262A33;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;gap:14px;animation:kx-pop .28s ease-out">
+              <div style="flex:none;display:flex;align-items:center;gap:12px">
+                <button type="button" onClick="{{ closeLibFull }}" aria-label="Close" style="width:44px;height:44px;flex:none;border-radius:9999px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#E7EBF2;font:600 16px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">✕</button>
+                <div style="flex:1;min-width:0">
+                  <div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ libSelName }}</div>
+                  <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ libSelMeta }}</div>
+                </div>
+              </div>
+              <div style="flex:1;min-height:0;border-radius:32px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);padding:12px;box-sizing:border-box;display:flex;align-items:center;justify-content:center">
+                <img src="{{ libSelSrc }}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:20px;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+              </div>
+              <div style="flex:none;display:flex;align-items:center;justify-content:center;gap:16px">
+                <button type="button" onClick="{{ libBin }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#D98A80;font:600 20px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✕</button>
+                <button type="button" onClick="{{ libShrink }}" style="width:56px;height:56px;border-radius:9999px;border:none;background:#8C84FF;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#fff;font:600 21px/1 'DM Sans',sans-serif;cursor:pointer;transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">↓</button>
+                <button type="button" onClick="{{ libKeep }}" style="width:62px;height:62px;border-radius:9999px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#4FD1C5;font:600 22px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">✓</button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ fullscreen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;background:#262A33;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;gap:14px;animation:kx-pop .3s ease-out">
+          <div style="flex:none;display:flex;align-items:center;gap:12px">
+            <button type="button" onClick="{{ closeFull }}" style="width:44px;height:44px;flex:none;border-radius:9999px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#E7EBF2;font:600 16px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">✕</button>
+            <div style="flex:1;min-width:0">
+              <div style="font:700 13.5px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ fullName }}</div>
+              <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ fullMeta }}</div>
+            </div>
+          </div>
+          <div style="flex:1;min-height:0;border-radius:32px;background:#262A33;box-shadow:inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051);padding:12px;box-sizing:border-box;display:flex;align-items:center;justify-content:center">
+            <img src="{{ fullSrc }}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:20px;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)">
+          </div>
+          <div style="flex:none;display:flex;flex-direction:column;gap:12px">
+            <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#9AA3B2;text-align:center">pinch to zoom · swipe down to close</div>
+            <div style="display:flex;gap:11px">
+              <button type="button" onClick="{{ actDelete }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#D98A80;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Bin it</button>
+              <button type="button" onClick="{{ actCompress }}" style="flex:none;padding:16px 18px;border-radius:16px;border:none;background:#8C84FF;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#fff;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="transform:translateY(0.5px)">↓ Shrink</button>
+              <button type="button" onClick="{{ actKeep }}" style="flex:1;padding:16px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#2C8C87;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Keep</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ binPreview }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:7;background:rgba(18,20,25,0.84);backdrop-filter:blur(6px);display:flex;flex-direction:column;justify-content:flex-end;animation:{{ fadeAnim }}">
+          <div onClick="{{ closePreview }}" style="flex:1;cursor:pointer"></div>
+          <div style="flex:none;padding:10px 18px 24px;border-radius:36px 36px 0 0;background:#262A33;box-shadow:0 -10px 24px rgba(0,0,0,0.66),inset 0 2px 0 rgba(255,255,255,0.06);display:flex;flex-direction:column;gap:16px;animation:{{ sheetAnim }};transform:{{ sheetShift }};transition:{{ sheetTrans }};touch-action:none;will-change:transform" onPointerDown="{{ sheetDown }}" onPointerMove="{{ sheetMove }}" onPointerUp="{{ sheetUp }}" onPointerCancel="{{ sheetUp }}">
+            <div style="align-self:center;width:46px;height:5px;border-radius:9999px;background:#262A33;box-shadow:inset 2px 2px 4px rgba(0,0,0,0.7),inset -2px -2px 4px rgba(255,255,255,0.06);margin-bottom:2px"></div>
+            <div style="padding:10px;border-radius:26px;background:#262A33;box-shadow:inset 8px 8px 16px rgba(0,0,0,0.66),inset -8px -8px 16px rgba(255,255,255,0.051)">
+              <img src="{{ previewSrc }}" alt="" style="display:block;width:100%;height:212px;object-fit:cover;border-radius:18px;box-shadow:6px 6px 12px rgba(0,0,0,0.52),-6px -6px 12px rgba(255,255,255,0.047)">
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="min-width:0;flex:1">
+                <div style="font:700 14px/1.25 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ previewName }}</div>
+                <div style="font:400 11.5px/1.4 'DM Sans',sans-serif;color:#9AA3B2;margin-top:4px">{{ previewMeta }}</div>
+              </div>
+              <button type="button" onClick="{{ closePreview }}" aria-label="Close" style="width:44px;height:44px;flex:none;border-radius:9999px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#9AA3B2;font:600 15px/1 'DM Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">✕</button>
+            </div>
+            <div style="padding:12px 14px;border-radius:16px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);font:700 11.5px/1.4 'DM Sans',sans-serif;color:{{ previewWarnColor }}">{{ previewWarn }}</div>
+            <div style="display:flex;gap:11px">
+              <button type="button" onClick="{{ restoreItem }}" style="flex:1;padding:17px;border-radius:16px;border:none;background:#8C84FF;color:#fff;font:700 13.5px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);min-height:44px;transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">Restore to gallery</button>
+              <button type="button" onClick="{{ deleteNow }}" style="flex:none;padding:17px 18px;border-radius:16px;border:none;background:#262A33;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);color:#D98A80;font:700 13.5px/1 'DM Sans',sans-serif;cursor:pointer;min-height:44px" style-active="box-shadow:inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)">Delete now</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ paywall }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;background:rgba(18,20,25,0.86);backdrop-filter:blur(6px);display:flex;flex-direction:column;justify-content:flex-end">
+          <div style="border-radius:32px 32px 0 0;padding:26px 22px 28px;background:#262A33;box-shadow:-12px -12px 20px rgba(255,255,255,0.051),12px 12px 20px rgba(0,0,0,0.66);animation:kx-sheet .3s ease-out">
+            <div style="width:46px;height:8px;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);margin:0 auto 20px"></div>
+            <div style="font:800 24px/1.2 'Plus Jakarta Sans',sans-serif;color:#E7EBF2;letter-spacing:-0.03em;text-wrap:pretty">You've used your 3 free shrinks</div>
+            <div style="font:400 13px/1.6 'DM Sans',sans-serif;color:#9AA3B2;margin-top:10px">Pro keeps shrinking without limits — and unlocks Balanced and Max strength for the big ones.</div>
+            <div style="display:flex;flex-direction:column;gap:11px;margin:20px 0">
+              <div style="display:flex;align-items:center;gap:13px;padding:15px 16px;border-radius:20px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)"><span style="width:30px;height:30px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;color:#4FD1C5;font:700 12px/1 'DM Sans',sans-serif">✓</span><span style="font:500 12.5px/1.4 'DM Sans',sans-serif;color:#E7EBF2">Unlimited background compression</span></div>
+              <div style="display:flex;align-items:center;gap:13px;padding:15px 16px;border-radius:20px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)"><span style="width:30px;height:30px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;color:#4FD1C5;font:700 12px/1 'DM Sans',sans-serif">✓</span><span style="font:500 12.5px/1.4 'DM Sans',sans-serif;color:#E7EBF2">Balanced &amp; Max strength — up to 82% smaller</span></div>
+              <div style="display:flex;align-items:center;gap:13px;padding:15px 16px;border-radius:20px;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)"><span style="width:30px;height:30px;flex:none;border-radius:9999px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);display:flex;align-items:center;justify-content:center;color:#4FD1C5;font:700 12px/1 'DM Sans',sans-serif">✓</span><span style="font:500 12.5px/1.4 'DM Sans',sans-serif;color:#E7EBF2">Originals kept until you say otherwise</span></div>
+            </div>
+            <button type="button" onClick="{{ goPro }}" style="width:100%;padding:17px;border-radius:16px;border:none;background:#8C84FF;color:#fff;font:700 15px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043);transition:transform .3s ease-out" style-hover="transform:translateY(-1px)" style-active="transform:translateY(0.5px)">Try Pro free for 7 days</button>
+            <div style="font:500 11px/1.4 'DM Sans',sans-serif;color:#9AA3B2;text-align:center;margin-top:12px">then $2.49/mo · cancel anytime</div>
+            <button type="button" onClick="{{ closePaywall }}" style="width:100%;margin-top:8px;padding:15px;border-radius:16px;border:none;background:#262A33;color:#9AA3B2;font:700 13px/1 'DM Sans',sans-serif;cursor:pointer;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">Keep swiping without it</button>
+            <div style="margin-top:12px;padding:13px 15px;border-radius:16px;background:#262A33;box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043);font:700 11.5px/1.45 'DM Sans',sans-serif;color:#8C84FF;text-align:center">{{ milestoneNote }}</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;left:18px;right:18px;bottom:104px;z-index:6;padding:15px 17px;border-radius:20px;background:#262A33;box-shadow:12px 12px 20px rgba(0,0,0,0.66),-12px -12px 20px rgba(255,255,255,0.051);display:flex;align-items:center;gap:13px;animation:kx-toast .3s ease-out">
+          <span style="width:12px;height:12px;flex:none;border-radius:50%;background:{{ toastDot }};box-shadow:inset 2px 2px 3px rgba(0,0,0,0.18)"></span>
+          <span style="flex:1;font:500 12.5px/1.4 'DM Sans',sans-serif;color:#E7EBF2">{{ toast }}</span>
+          <sc-if value="{{ toastAction }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ toastGo }}" style="flex:none;padding:9px 13px;border-radius:12px;border:none;background:#262A33;box-shadow:5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043);color:#8C84FF;font:700 11px/1 'Plus Jakarta Sans',sans-serif;cursor:pointer" style-active="box-shadow:inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)">{{ toastAction }}</button>
+          </sc-if>
+        </div>
+      </sc-if>
+
+    </div>
+  </x-import>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;stackStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;peek&quot;,&quot;fan&quot;,&quot;single&quot;],&quot;default&quot;:&quot;peek&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card stack&quot;},&quot;overlayStrength&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;bold&quot;,&quot;subtle&quot;],&quot;default&quot;:&quot;bold&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card stack&quot;},&quot;progressStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;ring&quot;,&quot;bar&quot;,&quot;counter&quot;],&quot;default&quot;:&quot;ring&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Chrome&quot;},&quot;chrome&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;bottom bar&quot;,&quot;floating&quot;],&quot;default&quot;:&quot;bottom bar&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Chrome&quot;},&quot;isPro&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;State&quot;}}">
+const EX = '9px 9px 16px rgba(0,0,0,0.57),-9px -9px 16px rgba(255,255,255,0.043)';
+const EXS = '5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)';
+const IN = 'inset 6px 6px 10px rgba(0,0,0,0.57),inset -6px -6px 10px rgba(255,255,255,0.043)';
+const IN_DEEP = 'inset 10px 10px 20px rgba(0,0,0,0.66),inset -10px -10px 20px rgba(255,255,255,0.051)';
+const IN_SM = 'inset 3px 3px 6px rgba(0,0,0,0.57),inset -3px -3px 6px rgba(255,255,255,0.043)';
+
+const IMGS = [
+  ['uploads/imagery-1788535350690-i5p5.jpg','IMG_20260831_1042.jpg','4.2 MB'],
+  ['uploads/imagery-1788535341617-yl3u.jpg','IMG_20260830_2211.jpg','3.1 MB'],
+  ['uploads/imagery-1788535350666-hbat.jpg','IMG_20260830_1907.jpg','5.8 MB'],
+  ['uploads/imagery-1788535341670-i79r.jpg','IMG_20260829_1533.jpg','2.4 MB'],
+  ['uploads/imagery-1788535341682-i4nl.jpg','IMG_20260829_0921.jpg','6.7 MB'],
+  ['uploads/imagery-1788535341688-yktq.jpg','VID_20260828_1745.mp4','48.3 MB'],
+  ['uploads/imagery-1788535341693-ymfz.jpg','Screenshot_0828.png','1.1 MB'],
+  ['uploads/imagery-1788535349659-mu3e.jpg','IMG_20260827_1402.jpg','3.9 MB'],
+  ['uploads/imagery-1788535350670-uxlg.jpg','IMG_20260827_1101.jpg','4.6 MB'],
+  ['uploads/imagery-1788535347652-b1pi.jpg','VID_20260826_2033.mp4','122 MB'],
+  ['uploads/imagery-1788535341719-h7lh.jpg','IMG_20260826_1214.jpg','2.8 MB'],
+  ['uploads/imagery-1788535341723-ji8a.jpg','IMG_20260825_1839.jpg','5.2 MB'],
+  ['uploads/imagery-1788535348651-2gdc.jpg','IMG_20260825_0744.jpg','3.4 MB'],
+  ['uploads/imagery-1788535341733-3u6z.jpg','Screenshot_0824.png','0.9 MB'],
+  ['uploads/imagery-1788535349645-2yfg.jpg','IMG_20260824_1622.jpg','7.1 MB'],
+  ['uploads/imagery-1788535341747-frk5.jpg','IMG_20260823_1350.jpg','4.4 MB'],
+  ['uploads/imagery-1788535341750-q2or.jpg','VID_20260823_0902.mp4','76.5 MB'],
+  ['uploads/imagery-1788535349642-p8hf.jpg','IMG_20260822_1728.jpg','3.6 MB'],
+];
+const DATES = ['31 Aug','30 Aug','30 Aug','29 Aug','29 Aug','28 Aug','28 Aug','27 Aug','27 Aug','26 Aug','26 Aug','25 Aug','25 Aug','24 Aug','24 Aug','23 Aug','23 Aug','22 Aug'];
+const DUR = ['0:14','1:02','0:38'];
+
+function mb(s) { return parseFloat(s); }
+
+const MONTHS = [['September 2026', 9], ['August 2026', 15], ['July 2026', 12], ['June 2026', 6]];
+
+const LIBRARY = (() => {
+  let k = 3;
+  return MONTHS.map(([label, n]) => {
+    const items = [];
+    for (let i = 0; i < n; i++, k++) {
+      const s = IMGS[k % IMGS.length];
+      const isVideo = /^VID/.test(s[1]);
+      const size = 0.6 + ((k * 37) % 90) / 10;
+      items.push({
+        id: 'L' + k, src: s[0], name: s[1], isVideo, dur: isVideo ? DUR[k % 3] : '',
+        mb: size, size: size.toFixed(1) + ' MB', day: n - i,
+        meta: (isVideo ? '1080p · ' : '4032×3024 · ') + label,
+      });
+    }
+    return { label, items, total: items.reduce((a, b) => a + b.mb, 0) };
+  });
+})();
+
+function buildDeck(offset) {
+  const out = [];
+  for (let i = 0; i < 50; i++) {
+    const s = IMGS[(i + offset) % IMGS.length];
+    const isVideo = /^VID/.test(s[1]);
+    out.push({
+      id: offset * 50 + i, src: s[0], name: s[1], size: s[2], isVideo,
+      dur: isVideo ? DUR[i % 3] : '',
+      meta: DATES[(i + offset) % DATES.length] + ' · ' + (isVideo ? '1080p' : '4032×3024'),
+    });
+  }
+  return out;
+}
+
+const CHANGES = [
+  ['libmulti', 'Library multi-select', 'Hold or hit Select in the library, pick across months, then Shrink or Move to bin in bulk.'],
+  ['multi', 'Bin multi-select', 'Press and hold any bin tile to enter select mode with it picked, then Restore or Delete now in one go.'],
+  ['theme', 'Dark neumorphism', 'One #262A33 surface, black-heavy drops and 4%-white highlights; violet and teal lifted for contrast.'],
+  ['settings', 'One settings entry', 'The header gear is gone — Settings lives only in the You tab.'],
+  ['wheel', 'Retention wheel picker', 'The slider became a snapping wheel: Session → 365 days.'],
+  ['library', 'Browsable library', 'Kept photos grouped by month, reachable mid-cleanup via the header grid button.'],
+  ['sort', 'Largest-first sorting', 'Sort each month largest → smallest, or newest first.'],
+  ['drawer', 'Tile action drawer', 'Tap a tile: a drawer slides up with a large preview and Bin · Shrink · Keep.'],
+  ['libfull', 'Full screen from drawer', 'Any action or close returns to the grid where you left off, already synced.'],
+  ['fav', 'Favourite replaces info', 'The ⓘ button is now ♥ — syncs to Gallery and Google Photos.'],
+  ['undo', 'Undo with 5s ring', 'A violet arc counts down beside the batch counter — no digits.'],
+  ['rewind', 'Undo rewind animation', 'The card flies back in from the side it left and springs to centre.'],
+];
+
+const RETENTIONS = [0, 1, 3, 7, 14, 30, 60, 90, 180, 365];
+const ROW = 42;
+
+const TABS = [['swipe','Swipe','→'],['bin','Bin','✕'],['small','Small','↓'],['rank','Rank','◆'],['settings','You','⚙']];
+
+const SCREENS = [
+  ['permission', 'Permission'],
+  ['onboarding', 'Onboarding'],
+  ['swipe', 'Swipe deck'],
+  ['fullscreen', 'Fullscreen viewer'],
+  ['bin', 'Recycle bin'],
+  ['preview', 'Bin item preview'],
+  ['small', 'Compressed'],
+  ['rank', 'Streak + leaderboard'],
+  ['settings', 'Settings'],
+  ['paywall', 'Pro paywall'],
+  ['summary', 'Session summary'],
+  ['empty', 'Library'],
+];
+
+class Component extends DCLogic {
+  state = {
+    screen: 'permission', tab: 'swipe', batch: 0, idx: 0, deck: buildDeck(0),
+    dx: 0, dy: 0, dragging: false, exit: null, full: false,
+    bin: [4, 7, 10, 13].map((n, k) => ({
+      src: IMGS[n][0], name: IMGS[n][1], size: IMGS[n][2],
+      days: [9, 6, 3, 1][k], meta: DATES[n] + ' · binned ' + [1, 4, 7, 9][k] + 'd ago',
+    })),
+    compressed: [
+      { src: IMGS[9][0], name: IMGS[9][1], before: '122 MB', after: '31.4 MB', tier: 'MAX' },
+      { src: IMGS[2][0], name: IMGS[2][1], before: '5.8 MB', after: '1.9 MB', tier: 'LIGHT' },
+    ],
+    savedMb: 94.5, freedMb: 61.2, kept: 0, freeUsed: 2, pro: false,
+    sort: 'size', favs: [], selMode: false, binSel: [], libSelMode: false, libPick: [], lib: LIBRARY, libSel: null, libFull: false, sheetOut: false, sheetGrab: false, sheetDy: 0,
+    retention: 7, quality: 'Light', account: true,
+    preview: null, paywall: false,
+    toast: null, toastKind: 'ok', toastAction: null,
+    queue: 0, streak: 6, undo: null, undoT: 0, rewind: false, demo: null,
+  };
+
+  componentWillUnmount() { clearTimeout(this._t); clearTimeout(this._q); clearTimeout(this._e); }
+
+  say(msg, kind, action) {
+    clearTimeout(this._t);
+    this.setState({ toast: msg, toastKind: kind || 'ok', toastAction: action || null });
+    this._t = setTimeout(() => this.setState({ toast: null, toastAction: null }), 3200);
+  }
+
+  cur() { return this.state.deck[this.state.idx]; }
+
+  advance() {
+    const nextIdx = this.state.idx + 1;
+    if (nextIdx >= this.state.deck.length) this.setState({ exit: null, dx: 0, dy: 0, screen: 'summary' });
+    else {
+      this.setState({ idx: nextIdx, exit: null, dx: 0, dy: 0, dragging: true, rewind: false });
+      requestAnimationFrame(() => requestAnimationFrame(() => this.setState({ dragging: false })));
+    }
+  }
+
+  fly(dir) {
+    if (this.state.exit) return;
+    clearTimeout(this._rw);
+    this.setState({ exit: dir, dragging: false, rewind: false });
+    clearTimeout(this._e);
+    this._e = setTimeout(() => this.advance(), 260);
+  }
+
+  snap(what) {
+    const s = this.state;
+    const shot = {
+      what, idx: s.idx, kept: s.kept, bin: s.bin, savedMb: s.savedMb, freedMb: s.freedMb,
+      freeUsed: s.freeUsed, queue: s.queue, compressed: s.compressed,
+    };
+    clearInterval(this._ui);
+    this.setState({ undo: shot, undoT: 5 });
+    this._ui = setInterval(() => {
+      this.setState(st => {
+        const t = st.undoT - 0.1;
+        if (t <= 0) { clearInterval(this._ui); return { undo: null, undoT: 0 }; }
+        return { undoT: t };
+      });
+    }, 100);
+  }
+
+  doUndo = () => {
+    const u = this.state.undo; if (!u) return;
+    clearInterval(this._ui);
+    const { what, ...rest } = u;
+    const dir = what === 'keep' ? 'right' : what === 'bin' ? 'left' : 'down';
+    clearTimeout(this._rw);
+    this.setState({ ...rest, undo: null, undoT: 0, dx: 0, dy: 0, full: false, dragging: true, exit: dir, rewind: true });
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      this.setState({ dragging: false, exit: null })));
+    this._rw = setTimeout(() => this.setState({ rewind: false }), 560);
+    this.say('Undone · ' + what + ' restored', 'ok');
+  };
+
+  keep = () => {
+    if (!this.cur()) return;
+    this.snap('keep');
+    this.setState(s => ({ kept: s.kept + 1, full: false }));
+    this.fly('right');
+  };
+
+  wheelRef = (el) => {
+    this._wheel = el;
+    if (el && !el._init) {
+      el._init = true;
+      const i = Math.max(0, RETENTIONS.indexOf(this.state.retention));
+      requestAnimationFrame(() => { el.scrollTop = i * ROW; });
+    }
+  };
+
+  onWheelScroll = () => {
+    const el = this._wheel; if (!el) return;
+    clearTimeout(this._wt);
+    this._wt = setTimeout(() => {
+      const i = Math.min(RETENTIONS.length - 1, Math.max(0, Math.round(el.scrollTop / ROW)));
+      if (RETENTIONS[i] !== this.state.retention) this.setState({ retention: RETENTIONS[i] });
+    }, 90);
+  };
+
+  pickRetention = (v) => {
+    this.setState({ retention: v });
+    if (this._wheel) this._wheel.scrollTo({ top: RETENTIONS.indexOf(v) * ROW, behavior: 'smooth' });
+  };
+
+  demo = (key) => {
+    const base = { demo: key, full: false, preview: null, paywall: false, libSel: null, libFull: false, toast: null };
+    if (key === 'settings' || key === 'wheel')
+      return this.setState({ ...base, screen: 'app', tab: 'settings' });
+    if (key === 'libmulti')
+      return this.setState({ ...base, screen: 'empty', libSelMode: true, libPick: [] });
+    if (key === 'multi')
+      return this.setState({ ...base, screen: 'app', tab: 'bin', selMode: true, binSel: [] });
+    if (key === 'library')
+      return this.setState({ ...base, screen: 'empty' });
+    if (key === 'sort')
+      return this.setState({ ...base, screen: 'empty', sort: 'size' });
+    if (key === 'drawer' || key === 'libfull') {
+      const first = this.state.lib[0].items.slice().sort((a, b) => b.mb - a.mb)[0];
+      return this.setState({ ...base, screen: 'empty', libSel: first, libFull: key === 'libfull' });
+    }
+    if (key === 'fav' || key === 'theme')
+      return this.setState({ ...base, screen: 'app', tab: 'swipe' });
+    this.setState({ ...base, screen: 'app', tab: 'swipe' });
+    this.snap('keep');
+  };
+
+  sheetDown = (e) => {
+    if (e.target.closest && e.target.closest('button')) return;
+    this._sy = e.clientY;
+    this._ph = e.currentTarget.offsetHeight;
+    if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+    this.setState({ sheetGrab: true, sheetDy: 0 });
+  };
+
+  sheetMove = (e) => {
+    if (!this.state.sheetGrab) return;
+    this.setState({ sheetDy: Math.max(0, e.clientY - this._sy) });
+  };
+
+  sheetUp = () => {
+    if (!this.state.sheetGrab) return;
+    if (this.state.sheetDy > 90) {
+      this.setState({ sheetGrab: false, sheetDy: (this._ph || 420) + 28 });
+      clearTimeout(this._sh);
+      this._sh = setTimeout(() => this.setState({
+        libSel: null, libFull: false, preview: null, sheetDy: 0, sheetOut: false,
+      }), 300);
+    } else {
+      this.setState({ sheetGrab: false, sheetDy: 0 });
+    }
+  };
+
+  libHoldStart = (p) => {
+    clearTimeout(this._lhold);
+    this._lheld = false;
+    this._lhold = setTimeout(() => {
+      this._lheld = true;
+      if (this.state.libSelMode) this.setState({ libSelMode: false, libPick: [] });
+      else this.setState({ libSelMode: true, libPick: [p.id], libSel: null, libFull: false });
+    }, 420);
+  };
+
+  libHoldEnd = () => clearTimeout(this._lhold);
+
+  libShrinkSel = () => {
+    const ids = this.state.libPick; if (!ids.length) return;
+    let saved = 0;
+    this.libMap(items => items.map(x => {
+      if (ids.indexOf(x.id) === -1) return x;
+      const next = Math.max(0.2, x.mb * 0.42);
+      saved += x.mb - next;
+      return { ...x, mb: next, size: next.toFixed(1) + ' MB' };
+    }));
+    this.setState(s => ({ savedMb: s.savedMb + saved, libPick: [], libSelMode: false }));
+    this.say(ids.length + ' shrunk · saved ' + saved.toFixed(1) + ' MB', 'ok', 'Compressed');
+  };
+
+  libBinSel = () => {
+    const ids = this.state.libPick; if (!ids.length) return;
+    const days = this.state.retention;
+    const picked = [];
+    this.state.lib.forEach(m => m.items.forEach(x => { if (ids.indexOf(x.id) !== -1) picked.push(x); }));
+    const freed = picked.reduce((a, b) => a + b.mb, 0);
+    this.setState(s => ({
+      freedMb: s.freedMb + freed,
+      bin: [...picked.map(p => ({ src: p.src, name: p.name, size: p.size, days, meta: p.meta + ' · just now' })), ...s.bin],
+      libPick: [], libSelMode: false,
+    }));
+    this.libMap(items => items.filter(x => ids.indexOf(x.id) === -1));
+    this.say(picked.length + ' moved to bin · ' + freed.toFixed(1) + ' MB', 'del', 'Bin');
+  };
+
+  holdStart = (b) => {
+    clearTimeout(this._hold);
+    this._held = false;
+    this._hold = setTimeout(() => {
+      this._held = true;
+      if (this.state.selMode) this.setState({ selMode: false, binSel: [] });
+      else this.setState({ selMode: true, binSel: [b] });
+    }, 420);
+  };
+
+  holdEnd = () => clearTimeout(this._hold);
+
+  toggleSelMode = () => this.setState(s => ({ selMode: !s.selMode, binSel: [] }));
+
+  toggleBinPick = (b) => this.setState(s => ({
+    binSel: s.binSel.indexOf(b) === -1 ? [...s.binSel, b] : s.binSel.filter(x => x !== b),
+  }));
+
+  restoreSel = () => {
+    const n = this.state.binSel.length; if (!n) return;
+    this.setState(s => ({ bin: s.bin.filter(x => s.binSel.indexOf(x) === -1), binSel: [], selMode: false }));
+    this.say(n + (n === 1 ? ' item' : ' items') + ' back in your gallery', 'ok');
+  };
+
+  deleteSel = () => {
+    const n = this.state.binSel.length; if (!n) return;
+    this.setState(s => ({ bin: s.bin.filter(x => s.binSel.indexOf(x) === -1), binSel: [], selMode: false }));
+    this.say(n + (n === 1 ? ' item' : ' items') + ' permanently deleted', 'del');
+  };
+
+  closeSheet(fn) {
+    if (this.state.libFull) {
+      if (fn) fn(); else this.setState({ libSel: null, libFull: false });
+      return;
+    }
+    clearTimeout(this._sh);
+    this.setState({ sheetOut: true });
+    this._sh = setTimeout(() => {
+      this.setState({ sheetOut: false });
+      if (fn) fn(); else this.setState({ libSel: null, libFull: false, preview: null });
+    }, 290);
+  }
+
+  libBin = () => this.closeSheet(this.libBinRun);
+  libShrink = () => this.closeSheet(this.libShrinkRun);
+  libKeep = () => this.closeSheet(this.libKeepRun);
+
+  libMap(fn) {
+    this.setState(s => ({
+      lib: s.lib.map(m => {
+        const items = fn(m.items);
+        return { label: m.label, items, total: items.reduce((a, b) => a + b.mb, 0) };
+      }),
+      libSel: null, libFull: false,
+    }));
+  }
+
+  libBinRun = () => {
+    const p = this.state.libSel; if (!p) return;
+    const days = this.state.retention;
+    this.setState(s => ({
+      freedMb: s.freedMb + p.mb,
+      bin: [{ src: p.src, name: p.name, size: p.size, days, meta: p.meta + ' · just now' }, ...s.bin],
+    }));
+    this.libMap(items => items.filter(x => x.id !== p.id));
+    this.say(days === 0 ? 'Binned — gone when you reopen Keepix' : 'Binned · ' + days + ' days to change your mind', 'del', 'Bin');
+  };
+
+  libShrinkRun = () => {
+    const p = this.state.libSel; if (!p) return;
+    const next = Math.max(0.2, p.mb * 0.42);
+    this.setState(s => ({ savedMb: s.savedMb + (p.mb - next) }));
+    this.libMap(items => items.map(x => x.id === p.id ? { ...x, mb: next, size: next.toFixed(1) + ' MB' } : x));
+    this.say('Shrunk · saved ' + (p.mb - next).toFixed(1) + ' MB', 'ok', 'Compressed');
+  };
+
+  libKeepRun = () => {
+    this.setState({ libSel: null, libFull: false });
+    this.say('Kept at full quality', 'ok');
+  };
+
+  favorite = () => {
+    const c = this.cur(); if (!c) return;
+    const on = this.state.favs.indexOf(c.id) === -1;
+    this.setState(s => ({ favs: on ? [...s.favs, c.id] : s.favs.filter(i => i !== c.id) }));
+    this.say(on ? 'Favourited · synced to Gallery & Google Photos' : 'Removed from favourites', on ? 'ok' : 'del');
+  };
+
+  del = () => {
+    const c = this.cur(); if (!c) return;
+    const zero = this.state.retention === 0;
+    this.snap('bin');
+    this.setState(s => ({
+      full: false, freedMb: s.freedMb + mb(c.size),
+      bin: [{ src: c.src, name: c.name, size: c.size, days: s.retention, meta: c.meta + ' · just now' }, ...s.bin],
+    }));
+    this.say(zero ? 'Binned — gone when you reopen Keepix' : 'Binned · ' + this.state.retention + ' days to change your mind', 'del', 'Bin');
+    this.fly('left');
+  };
+
+  compress = () => {
+    const c = this.cur(); if (!c) return;
+    if (!this.state.pro && this.state.freeUsed >= 3) {
+      this.setState({ paywall: true, dx: 0, dy: 0, dragging: false, full: false });
+      return;
+    }
+    const before = mb(c.size);
+    const ratio = this.state.pro ? (this.state.quality === 'Max' ? 0.18 : 0.34) : 0.42;
+    const after = Math.max(0.3, before * ratio);
+    this.snap('shrink');
+    this.setState(s => ({
+      full: false, queue: s.queue + 1,
+      freeUsed: s.pro ? s.freeUsed : s.freeUsed + 1,
+      savedMb: s.savedMb + (before - after),
+      compressed: [{ src: c.src, name: c.name, before: c.size, after: after.toFixed(1) + ' MB', tier: (s.pro ? s.quality : 'Light').toUpperCase() }, ...s.compressed],
+    }));
+    this.say('Shrinking… ' + c.size + ' → ' + after.toFixed(1) + ' MB', 'comp');
+    clearTimeout(this._q);
+    this._q = setTimeout(() => this.setState(s => ({ queue: Math.max(0, s.queue - 1) })), 2600);
+    this.fly('down');
+  };
+
+  onDown = (e) => {
+    if (this.state.exit || this.state.full) return;
+    this._start = { x: e.clientX, y: e.clientY };
+    if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+    this.setState({ dragging: true, dx: 0, dy: 0 });
+  };
+
+  onMove = (e) => {
+    if (!this.state.dragging || !this._start) return;
+    this.setState({ dx: e.clientX - this._start.x, dy: e.clientY - this._start.y });
+  };
+
+  onUp = () => {
+    if (!this.state.dragging) return;
+    const { dx, dy } = this.state;
+    this.setState({ dragging: false });
+    if (Math.abs(dx) > 92 && Math.abs(dx) > Math.abs(dy)) return dx > 0 ? this.keep() : this.del();
+    if (dy > 110 && dy > Math.abs(dx)) return this.compress();
+    if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return this.setState({ full: true, dx: 0, dy: 0 });
+    this.setState({ dx: 0, dy: 0 });
+  };
+
+  go = (screen) => () => {
+    if (screen === 'permission' || screen === 'onboarding' || screen === 'summary' || screen === 'empty')
+      return this.setState({ screen, full: false, preview: null, paywall: false, toast: null });
+    if (screen === 'fullscreen') return this.setState({ screen: 'app', tab: 'swipe', full: true, preview: null, paywall: false });
+    if (screen === 'preview') return this.setState({ screen: 'app', tab: 'bin', full: false, paywall: false, preview: this.state.bin[0] || null });
+    if (screen === 'paywall') return this.setState({ screen: 'app', tab: 'settings', paywall: true, full: false, preview: null });
+    this.setState({ screen: 'app', tab: screen, full: false, preview: null, paywall: false });
+  };
+
+  renderVals() {
+    const s = this.state;
+    const stack = this.props.stackStyle || 'peek';
+    const prog = this.props.progressStyle || 'ring';
+    const chrome = this.props.chrome || 'bottom bar';
+    const pro = this.props.isPro === true ? true : s.pro;
+
+    const dragK = s.dragging ? s.dx : 0;
+    const dragY = s.dragging ? s.dy : 0;
+    const cards = [];
+    const visible = stack === 'single' ? 1 : 3;
+    for (let i = 0; i < visible; i++) {
+      const item = s.deck[s.idx + i];
+      if (!item) break;
+      let transform, opacity = 1;
+      const transition = s.dragging ? 'none'
+        : s.rewind ? 'transform .52s cubic-bezier(.22,1.15,.3,1), opacity .34s ease-out'
+        : 'transform .3s ease-out, opacity .3s ease-out';
+      if (i === 0) {
+        if (s.exit === 'left') transform = 'translate(-540px, 60px) rotate(-24deg)';
+        else if (s.exit === 'right') transform = 'translate(540px, 60px) rotate(24deg)';
+        else if (s.exit === 'down') { transform = 'translateY(600px) scale(.78)'; opacity = 0; }
+        else transform = 'translate(' + dragK + 'px,' + dragY + 'px) rotate(' + (dragK / 22) + 'deg)';
+      } else if (stack === 'fan') {
+        transform = i === 1 ? 'rotate(-4.5deg) translateY(10px) scale(.955)' : 'rotate(5deg) translateY(20px) scale(.91)';
+      } else {
+        transform = i === 1 ? 'translateY(14px) scale(.945)' : 'translateY(28px) scale(.89)';
+      }
+      const soft = this.props.overlayStrength === 'subtle' ? 0.55 : 1;
+      cards.push({
+        src: item.src, name: item.name, size: item.size, meta: item.meta,
+        isVideo: item.isVideo, dur: item.dur,
+        transform, transition, opacity, z: 10 - i,
+        keepOp: i === 0 ? Math.min(1, Math.max(0, dragK / 100)) * soft : 0,
+        delOp: i === 0 ? Math.min(1, Math.max(0, -dragK / 100)) * soft : 0,
+        compOp: i === 0 ? Math.min(1, Math.max(0, (dragY - 24) / 90)) * soft : 0,
+        shrinkHint: item.size + ' → ~' + Math.max(0.3, mb(item.size) * (pro ? 0.2 : 0.42)).toFixed(1) + ' MB',
+      });
+    }
+    cards.reverse();
+
+    const done = s.idx;
+    const pct = done / 50;
+    const binSizeMb = s.bin.reduce((a, b) => a + mb(b.size), 0);
+    const zero = s.retention === 0;
+    const freeLeft = Math.max(0, 3 - s.freeUsed);
+    const left = Math.max(0, s.deck.length - s.idx);
+    const curCard = this.cur();
+    const favOn = !!curCard && s.favs.indexOf(curCard.id) !== -1;
+
+    const qualities = ['Light', 'Balanced', 'Max'].map(name => {
+      const locked = !pro && name !== 'Light';
+      const active = s.quality === name;
+      return {
+        name, tag: locked ? 'PRO' : (name === 'Light' ? '~58%' : name === 'Balanced' ? '~72%' : '~82%'),
+        shadow: active ? IN_DEEP : EXS,
+        color: locked ? '#9AA3B2' : active ? '#8C84FF' : '#E7EBF2',
+        pick: () => locked ? this.setState({ paywall: true }) : this.setState({ quality: name }),
+      };
+    });
+
+    const friendData = [['You', 412, true], ['Priya', 508, false], ['Tomas', 366, false], ['Mide', 210, false], ['Sam', 94, false]];
+    const friends = friendData.slice().sort((a, b) => b[1] - a[1]).map((f, i) => ({
+      rank: i + 1, name: f[0], score: f[1] + ' swipes', initial: f[0][0],
+      shadow: f[2] ? IN_DEEP : EXS,
+      rankColor: i === 0 ? '#8C84FF' : '#9AA3B2',
+      avatarBg: f[2] ? '#8C84FF' : '#262A33',
+      avatarColor: f[2] ? '#ffffff' : '#9AA3B2',
+    }));
+
+    const p = s.preview;
+
+    return {
+      changeItems: CHANGES.map(([key, title, note]) => ({
+        title, note,
+        shadow: s.demo === key ? IN_DEEP : EXS,
+        color: s.demo === key ? '#8C84FF' : '#E7EBF2',
+        dot: s.demo === key ? '#8C84FF' : '#525B6B',
+        go: () => this.demo(key),
+      })),
+
+      navItems: SCREENS.map((sc, i) => {
+        const active = (sc[0] === 'fullscreen' && s.full) || (sc[0] === 'preview' && !!s.preview) ||
+          (sc[0] === 'paywall' && s.paywall) ||
+          (!s.full && !s.preview && !s.paywall && (s.screen === sc[0] || (s.screen === 'app' && s.tab === sc[0])));
+        return {
+          num: String(i + 1).padStart(2, '0'), label: sc[1], go: this.go(sc[0]),
+          shadow: active ? IN_DEEP : EXS,
+          color: active ? '#8C84FF' : '#E7EBF2',
+        };
+      }),
+
+      isPermission: s.screen === 'permission',
+      isOnboarding: s.screen === 'onboarding',
+      isApp: s.screen === 'app',
+      isSummary: s.screen === 'summary',
+      isEmpty: s.screen === 'empty',
+      tabSwipe: s.tab === 'swipe', tabBin: s.tab === 'bin', tabSmall: s.tab === 'small',
+      tabRank: s.tab === 'rank', tabSettings: s.tab === 'settings',
+      showChromeBar: chrome === 'bottom bar',
+
+      grant: this.go('onboarding'),
+      startSwiping: this.go('swipe'),
+      goSettings: this.go('settings'),
+      goBin: this.go('bin'),
+      goEmpty: this.go('empty'),
+      goLibrary: this.go('empty'),
+      backToSwipe: this.go('swipe'),
+      libIcon: left === 0 ? '✓' : '⊞',
+      libIconColor: left === 0 ? '#4FD1C5' : '#8C84FF',
+      libTitle: left === 0 ? "Every photo's been seen" : 'Your kept photos',
+      libNote: left === 0
+        ? 'Browse what you kept below — new photos land here automatically.'
+        : left + ' photo' + (left === 1 ? '' : 's') + ' still waiting in the deck. Tap back any time to keep sorting.',
+      sortOpts: [['size', 'Largest first'], ['date', 'Newest first']].map(([v, label]) => ({
+        label,
+        shadow: s.sort === v
+          ? '4px 4px 9px rgba(0,0,0,0.52),-4px -4px 9px rgba(255,255,255,0.051)'
+          : 'none',
+        color: s.sort === v ? '#8C84FF' : '#9AA3B2',
+        pick: () => this.setState({ sort: v }),
+      })),
+      libMonths: s.lib.map(m => ({
+        label: m.label,
+        sub: m.items.length + ' items · ' + m.total.toFixed(1) + ' MB',
+        items: m.items.slice()
+          .sort(s.sort === 'size' ? (a, b) => b.mb - a.mb : (a, b) => b.day - a.day)
+          .map(p => ({
+            ...p,
+            selMode: s.libSelMode,
+            checkGlyph: s.libPick.indexOf(p.id) !== -1 ? '✓' : '',
+            checkBg: s.libPick.indexOf(p.id) !== -1 ? '#8C84FF' : '#262A33',
+            checkColor: s.libPick.indexOf(p.id) !== -1 ? '#fff' : '#9AA3B2',
+            shadow: s.libSelMode && s.libPick.indexOf(p.id) !== -1
+              ? 'inset 6px 6px 12px rgba(0,0,0,0.66),inset -6px -6px 12px rgba(255,255,255,0.051)'
+              : '6px 6px 12px rgba(0,0,0,0.52),-6px -6px 12px rgba(255,255,255,0.047)',
+            hold: () => this.libHoldStart(p),
+            unhold: this.libHoldEnd,
+            open: () => {
+              if (this._lheld) { this._lheld = false; return; }
+              if (s.libSelMode) this.setState(st => ({
+                libPick: st.libPick.indexOf(p.id) === -1 ? [...st.libPick, p.id] : st.libPick.filter(i => i !== p.id),
+              }));
+              else this.setState({ libSel: p, libFull: false });
+            },
+          })),
+      })),
+      libSelMode: s.libSelMode,
+      libSelNone: s.libPick.length === 0,
+      libSelCountLabel: s.libPick.length === 0 ? 'Tap items to select' : s.libPick.length + ' selected',
+      libSelCountColor: s.libPick.length === 0 ? '#9AA3B2' : '#8C84FF',
+      libShrinkSelBg: s.libPick.length ? '#8C84FF' : '#262A33',
+      libShrinkSelColor: s.libPick.length ? '#fff' : '#9AA3B2',
+      libBinSelColor: s.libPick.length ? '#D98A80' : '#9AA3B2',
+      libShrinkSel: this.libShrinkSel,
+      libBinSel: this.libBinSel,
+      toggleLibSelMode: () => this.setState(st => ({ libSelMode: !st.libSelMode, libPick: [] })),
+      libSelBtnLabel: s.libSelMode ? 'Done' : 'Select',
+      libSelBtnColor: s.libSelMode ? '#8C84FF' : '#9AA3B2',
+      libSelBtnShadow: s.libSelMode
+        ? 'inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.043)'
+        : '4px 4px 9px rgba(0,0,0,0.57),-4px -4px 9px rgba(255,255,255,0.043)',
+      libSelAllLabel: (() => {
+        const total = s.lib.reduce((a, m) => a + m.items.length, 0);
+        return s.libPick.length === total && total > 0 ? 'Clear' : 'Select all';
+      })(),
+      toggleLibSelAll: () => this.setState(st => {
+        const all = [];
+        st.lib.forEach(m => m.items.forEach(x => all.push(x.id)));
+        return { libPick: st.libPick.length === all.length ? [] : all };
+      }),
+      libOpen: !!s.libSel,
+      libSelSrc: s.libSel ? s.libSel.src : '',
+      libSelName: s.libSel ? s.libSel.name : '',
+      libSelMeta: s.libSel ? s.libSel.size + ' · ' + s.libSel.meta : '',
+      closeLib: () => this.closeSheet(),
+      sheetAnim: (s.sheetGrab || s.sheetDy) ? 'none'
+        : s.sheetOut ? 'kx-sheet-out .28s cubic-bezier(.32,.72,0,1) forwards'
+        : 'kx-sheet .34s cubic-bezier(.32,.72,0,1)',
+      sheetShift: 'translateY(' + (s.sheetDy || 0) + 'px)',
+      sheetTrans: s.sheetGrab ? 'none' : 'transform .3s cubic-bezier(.22,1.05,.3,1)',
+      sheetDown: this.sheetDown, sheetMove: this.sheetMove, sheetUp: this.sheetUp,
+      fadeAnim: s.sheetOut ? 'kx-fade-out .28s ease-out forwards' : 'kx-pop .25s ease-out',
+      libFullOpen: !!s.libSel && s.libFull,
+      openLibFull: () => this.setState({ libFull: true }),
+      closeLibFull: () => this.closeSheet(),
+      libBin: this.libBin, libShrink: this.libShrink, libKeep: this.libKeep,
+      nextBatch: () => this.setState(st => ({ screen: 'app', tab: 'swipe', idx: 0, batch: st.batch + 1, deck: buildDeck(st.batch + 1) })),
+
+      cards,
+      onDown: this.onDown, onMove: this.onMove, onUp: this.onUp,
+      actKeep: this.keep, actDelete: this.del, actCompress: this.compress,
+      actFavorite: this.favorite,
+      favorited: favOn,
+      favGlyph: favOn ? '♥' : '♡',
+      favColor: favOn ? '#F08BA6' : '#9AA3B2',
+      favShadow: favOn
+        ? 'inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.047)'
+        : '5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)',
+
+      undoOn: !!s.undo,
+      undoWhat: s.undo ? s.undo.what : '',
+      undoDeg: (s.undoT / 5 * 360).toFixed(1) + 'deg',
+      doUndo: this.doUndo,
+
+      streak: s.streak,
+      streakDeg: (s.streak / 7) * 360 + 'deg',
+      streakLabel: s.streak + ' days',
+      streakHeadline: s.streak >= 7 ? 'A full week — Max shrink unlocked' : 'One more day for a free Max shrink',
+      streakSub: s.streak >= 7 ? 'Claim it on any card over 20 MB.' : 'Every 7-day streak earns one Max compression.',
+      friends,
+
+      showRing: prog === 'ring', showBar: prog === 'bar', showCounter: prog === 'counter',
+      pctDeg: (pct * 360).toFixed(0) + 'deg',
+      pctLabel: (pct * 100).toFixed(0) + '%',
+      doneCount: done,
+      counterLabel: done + ' of 50 sorted',
+      batchLabel: 'Batch ' + (s.batch + 1) + ' · ' + (50 - done) + ' left',
+      preloadNote: done >= 40 ? 'Next 50 already loaded' : 'Sorted newest first',
+
+      queueActive: s.queue > 0, queueCount: s.queue,
+
+      bin: s.bin.map(b => ({
+        src: b.src,
+        dayLabel: zero ? 'on reopen' : b.days === 0 ? 'today' : b.days + 'd left',
+        dayColor: b.days <= 1 || zero ? '#D98A80' : '#9AA3B2',
+        selMode: s.selMode,
+        checkGlyph: s.binSel.indexOf(b) !== -1 ? '✓' : '',
+        checkBg: s.binSel.indexOf(b) !== -1 ? '#8C84FF' : '#262A33',
+        checkColor: s.binSel.indexOf(b) !== -1 ? '#fff' : '#9AA3B2',
+        shadow: s.selMode && s.binSel.indexOf(b) !== -1
+          ? 'inset 5px 5px 10px rgba(0,0,0,0.66),inset -5px -5px 10px rgba(255,255,255,0.051)'
+          : '5px 5px 10px rgba(0,0,0,0.57),-5px -5px 10px rgba(255,255,255,0.043)',
+        hold: () => this.holdStart(b),
+        unhold: this.holdEnd,
+        open: () => {
+          if (this._held) { this._held = false; return; }
+          if (s.selMode) this.toggleBinPick(b); else this.setState({ preview: b });
+        },
+      })),
+      selMode: s.selMode && s.bin.length > 0,
+      binBulkPlain: !s.selMode && s.bin.length > 0,
+      selNone: s.binSel.length === 0,
+      selCountLabel: s.binSel.length === 0 ? 'Tap items to select' : s.binSel.length + ' selected',
+      selCountColor: s.binSel.length === 0 ? '#9AA3B2' : '#8C84FF',
+      selAllLabel: s.binSel.length === s.bin.length && s.bin.length > 0 ? 'Clear' : 'Select all',
+      toggleSelAll: () => this.setState(st => ({ binSel: st.binSel.length === st.bin.length ? [] : st.bin.slice() })),
+      restoreSelBg: s.binSel.length ? '#8C84FF' : '#262A33',
+      restoreSelColor: s.binSel.length ? '#fff' : '#9AA3B2',
+      deleteSelColor: s.binSel.length ? '#D98A80' : '#9AA3B2',
+      restoreSel: this.restoreSel,
+      deleteSel: this.deleteSel,
+      toggleSelMode: this.toggleSelMode,
+      noCtx: (e) => e.preventDefault(),
+      selBtnLabel: s.selMode ? 'Done' : 'Select',
+      selBtnColor: s.selMode ? '#8C84FF' : '#9AA3B2',
+      selBtnShadow: s.selMode
+        ? 'inset 4px 4px 8px rgba(0,0,0,0.57),inset -4px -4px 8px rgba(255,255,255,0.043)'
+        : '4px 4px 9px rgba(0,0,0,0.57),-4px -4px 9px rgba(255,255,255,0.043)',
+      binCount: s.bin.length,
+      binSize: binSizeMb.toFixed(1) + ' MB',
+      binEmpty: s.bin.length === 0,
+      binHasItems: s.bin.length > 0,
+      binNote: zero
+        ? 'These are deleted the next time you open Keepix. Restore anything now.'
+        : 'Nothing is deleted from your phone until its countdown runs out.',
+      restoreAll: () => { const n = s.bin.length; this.setState({ bin: [] }); this.say(n + ' items back in your gallery', 'ok'); },
+      emptyBin: () => { const n = s.bin.length; this.setState({ bin: [] }); this.say(n + ' items permanently deleted', 'del'); },
+
+      binPreview: !!p,
+      previewSrc: p ? p.src : '', previewName: p ? p.name : '',
+      previewMeta: p ? p.meta + ' · ' + p.size : '',
+      previewWarn: p ? (zero ? 'Deleted when you reopen the app' : 'Permanently deleted in ' + p.days + ' days') : '',
+      previewWarnColor: p && (zero || p.days <= 1) ? '#D98A80' : '#9AA3B2',
+      closePreview: () => this.closeSheet(),
+      restoreItem: () => this.closeSheet(() => { this.setState(st => ({ bin: st.bin.filter(x => x !== p), preview: null })); this.say(p.name + ' is back in your gallery', 'ok'); }),
+      deleteNow: () => this.closeSheet(() => { this.setState(st => ({ bin: st.bin.filter(x => x !== p), preview: null })); this.say('Deleted for good', 'del'); }),
+
+      compressed: s.compressed,
+      smallCount: s.compressed.length,
+      savedTotal: s.savedMb.toFixed(1) + ' MB',
+      freedLabel: s.freedMb.toFixed(1) + ' MB',
+      summaryNote: 'Your bin holds ' + s.bin.length + ' items for ' + (zero ? 'this session' : s.retention + ' more days') + '. Nothing is gone yet.',
+
+      fullscreen: s.full && !!this.cur(),
+      fullSrc: this.cur() ? this.cur().src : '',
+      fullName: this.cur() ? this.cur().name : '',
+      fullMeta: this.cur() ? this.cur().meta + ' · ' + this.cur().size : '',
+      closeFull: () => this.setState({ full: false }),
+
+      notPro: !pro,
+      freeLeftLabel: freeLeft > 0 ? freeLeft + ' free shrinks left today.' : 'Free shrinks used up.',
+      paywall: s.paywall,
+      openPaywall: () => this.setState({ paywall: true }),
+      closePaywall: () => this.setState({ paywall: false }),
+      goPro: () => { this.setState({ pro: true, paywall: false, quality: 'Balanced' }); this.say('Pro on — Balanced and Max unlocked', 'comp'); },
+      milestoneNote: s.streak >= 7 ? '◆ Streak reward ready: 1 free Max shrink' : '◆ ' + (7 - s.streak) + ' more day' + (7 - s.streak === 1 ? '' : 's') + ' of swiping = 1 free Max shrink',
+
+      retention: s.retention,
+      retentionLabel: zero ? 'Session' : s.retention + (s.retention === 1 ? ' day' : ' days'),
+      retentionNote: zero
+        ? 'Session mode: binned items are deleted the next time you open Keepix. Restore anything before you close it.'
+        : 'Binned items are permanently deleted ' + s.retention + ' days after you swipe. Existing bin items keep their original date.',
+      wheelRef: this.wheelRef,
+      onWheelScroll: this.onWheelScroll,
+      retentionOpts: RETENTIONS.map(v => {
+        const sel = v === s.retention;
+        return {
+          label: v === 0 ? 'Session only' : v + (v === 1 ? ' day' : ' days'),
+          font: (sel ? '800 20px/1 ' : '600 17px/1 ') + "'Plus Jakarta Sans',sans-serif",
+          color: sel ? '#8C84FF' : '#9AA3B2',
+          op: sel ? 1 : 0.5,
+          pick: () => this.pickRetention(v),
+        };
+      }),
+      qualities,
+      qualityNote: pro ? 'Applied to every shrink swipe. Originals are replaced once the new file is verified.' : 'Light is free. Balanced and Max come with Pro.',
+
+      account: s.account,
+      accountNote: s.account ? 'Signed in · syncing weekly count only' : 'Off · Keepix stays fully offline',
+      accountTrack: s.account ? '#8C84FF' : '#262A33',
+      accountKnob: s.account ? '29px' : '3px',
+      toggleAccount: () => this.setState(st => ({ account: !st.account })),
+
+      tabs: TABS.map(t => {
+        const active = s.tab === t[0];
+        return {
+          label: t[1], glyph: t[2], go: this.go(t[0]),
+          shadow: active ? IN_DEEP : EXS,
+          color: active ? '#8C84FF' : '#9AA3B2',
+          labelColor: active ? '#E7EBF2' : '#9AA3B2',
+        };
+      }),
+
+      toast: s.toast,
+      toastAction: s.toastAction,
+      toastGo: this.go('bin'),
+      toastDot: s.toastKind === 'del' ? '#E09A90' : s.toastKind === 'comp' ? '#8C84FF' : '#4FD1C5',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
