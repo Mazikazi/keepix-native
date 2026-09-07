@@ -91,6 +91,76 @@ class CoreLogicTest {
 
     @Test fun `short drags spring back`() = assertNull(act(50f, 50f))
 
+    // ---- Axis lock and fling -------------------------------------------------
+
+    @Test fun `a drag inside the slop has not picked an axis yet`() {
+        assertNull(dragAxis(5f, 5f, slopPx = 12f))
+        assertNull(dragAxis(-11f, 0f, slopPx = 12f))
+    }
+
+    @Test fun `the dominant direction wins the axis, ties go horizontal`() {
+        assertEquals(DragAxis.HORIZONTAL, dragAxis(40f, 10f, slopPx = 12f))
+        assertEquals(DragAxis.VERTICAL, dragAxis(10f, 40f, slopPx = 12f))
+        assertEquals(DragAxis.HORIZONTAL, dragAxis(40f, 40f, slopPx = 12f))
+    }
+
+    @Test fun `a locked axis ignores travel on the other one`() {
+        // Locked vertical, then dragged a long way sideways: must not keep.
+        assertNull(
+            resolveDeckAction(
+                dx = 400f, dy = 0f,
+                horizontalThresholdPx = 92f, verticalThresholdPx = 110f,
+                axis = DragAxis.VERTICAL,
+            )
+        )
+        // Locked horizontal, dragged a long way down: must not shrink.
+        assertNull(
+            resolveDeckAction(
+                dx = 0f, dy = 400f,
+                horizontalThresholdPx = 92f, verticalThresholdPx = 110f,
+                axis = DragAxis.HORIZONTAL,
+            )
+        )
+    }
+
+    @Test fun `a short fast flick commits where a short slow drag does not`() {
+        // 40px of travel is well under the 92px threshold. Released stationary
+        // it springs back; thrown at 1000px/s it commits. This is the whole
+        // point -- a decisive user barely moves the card before letting go.
+        assertNull(act(40f, 0f))
+        assertEquals(
+            DeckAction.KEEP,
+            resolveDeckAction(
+                dx = 40f, dy = 0f,
+                horizontalThresholdPx = 92f, verticalThresholdPx = 110f,
+                velocityX = 1000f, axis = DragAxis.HORIZONTAL,
+            )
+        )
+    }
+
+    @Test fun `a flick back the other way beats the distance already travelled`() {
+        // Dragged right past the threshold, then thrown left on release. The
+        // last thing the user did was throw it left, so it bins.
+        assertEquals(
+            DeckAction.BIN,
+            resolveDeckAction(
+                dx = 100f, dy = 0f,
+                horizontalThresholdPx = 92f, verticalThresholdPx = 110f,
+                velocityX = -2000f, axis = DragAxis.HORIZONTAL,
+            )
+        )
+    }
+
+    @Test fun `a fast flick down a video still springs back`() {
+        assertNull(
+            resolveDeckAction(
+                dx = 0f, dy = 40f,
+                horizontalThresholdPx = 92f, verticalThresholdPx = 110f,
+                velocityY = 3000f, axis = DragAxis.VERTICAL, shrinkEnabled = false,
+            )
+        )
+    }
+
     @Test fun `card rotation clamps at twelve degrees`() {
         assertEquals(0f, cardRotationDegrees(0f), 0.001f)
         assertEquals(2f, cardRotationDegrees(44f), 0.001f)

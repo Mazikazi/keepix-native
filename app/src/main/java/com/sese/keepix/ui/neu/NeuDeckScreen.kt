@@ -33,6 +33,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +41,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.sese.keepix.core.logic.DeckAction
+import com.sese.keepix.core.logic.DragAxis
+import com.sese.keepix.core.logic.dragAxis
 import com.sese.keepix.core.logic.cardRotationDegrees
 import com.sese.keepix.core.logic.resolveDeckAction
 import com.sese.keepix.data.MediaItem
@@ -69,6 +72,12 @@ private const val CARD_EXIT_MS = 300
 /** Commit thresholds. Down asks for more travel: shrink is the only action that rewrites bytes. */
 private val HorizontalCommit = 92.dp
 private val VerticalCommit = 110.dp
+
+/**
+ * Travel before the drag locks to an axis. Under this the card does not move at
+ * all, so resting a thumb on it and shifting slightly leaves it where it is.
+ */
+private val AxisLockSlop = 12.dp
 
 /** A card mid-flight. Rendered above the stack so the incoming card is never animated. */
 private data class ExitingCard(val item: MediaItem, val action: DeckAction, val from: Offset)
@@ -128,11 +137,23 @@ private fun CardStack(
     // frame late and shows a visible slide-back. Never resetting it at all is
     // simpler than getting that frame right.
     val drag = remember(front?.id) { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var dragging by remember(front?.id) { mutableStateOf(false) }
     var exiting by remember { mutableStateOf<ExitingCard?>(null) }
+
+    // The finger's own travel, before the axis lock is applied. The card follows
+    // only the locked component of this, never the raw diagonal.
+    var raw by remember(front?.id) { mutableStateOf(Offset.Zero) }
+    var axis by remember(front?.id) { mutableStateOf<DragAxis?>(null) }
+    val velocity = remember(front?.id) { VelocityTracker() }
 
     val hCommitPx = with(density) { HorizontalCommit.toPx() }
     val vCommitPx = with(density) { VerticalCommit.toPx() }
+    val lockSlopPx = with(density) { AxisLockSlop.toPx() }
+
+    fun endGesture() {
+        raw = Offset.Zero
+        axis = null
+        velocity.resetTracking()
+    }
 
     fun commit(item: MediaItem, action: DeckAction, from: Offset) {
         exiting = ExitingCard(item, action, from)
@@ -175,31 +196,51 @@ private fun CardStack(
                     }
                     .pointerInput(front.id) {
                         detectDragGestures(
-                            onDragStart = { dragging = true },
+                            onDragStart = { endGesture() },
                             onDragCancel = {
-                                dragging = false
+                                endGesture()
                                 scope.launch { drag.animateTo(Offset.Zero) }
                             },
                             onDragEnd = {
-                                dragging = false
+                                val v = velocity.calculateVelocity()
                                 val action = resolveDeckAction(
                                     dx = drag.value.x,
                                     dy = drag.value.y,
                                     horizontalThresholdPx = hCommitPx,
                                     verticalThresholdPx = vCommitPx,
+                                    velocityX = v.x,
+                                    velocityY = v.y,
+                                    axis = axis,
                                     // Video shrink is out of v1: a downward drag
                                     // on a video springs back instead.
                                     shrinkEnabled = !front.isVideo,
                                 )
+                                val released = drag.value
+                                endGesture()
                                 if (action != null) {
-                                    commit(front, action, drag.value)
+                                    commit(front, action, released)
                                 } else {
                                     scope.launch { drag.animateTo(Offset.Zero) }
                                 }
                             },
                         ) { change, amount ->
                             change.consume()
-                            scope.launch { drag.snapTo(drag.value + amount) }
+                            raw += amount
+                            // Latched: once an axis is chosen it holds for the
+                            // rest of the gesture, so the card cannot wander
+                            // between keep and shrink mid-drag.
+                            if (axis == null) axis = dragAxis(raw.x, raw.y, lockSlopPx)
+                            // Velocity is tracked in the finger's own space. The
+                            // node's local coordinates travel with the card, so
+                            // change.position would report a flick as nearly
+                            // stationary.
+                            velocity.addPosition(change.uptimeMillis, raw)
+                            val locked = when (axis) {
+                                DragAxis.HORIZONTAL -> Offset(raw.x, 0f)
+                                DragAxis.VERTICAL -> Offset(0f, raw.y)
+                                null -> Offset.Zero
+                            }
+                            scope.launch { drag.snapTo(locked) }
                         }
                     },
             )

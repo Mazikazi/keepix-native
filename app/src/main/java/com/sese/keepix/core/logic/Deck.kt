@@ -5,18 +5,58 @@ import kotlin.math.abs
 /** The three decisions the deck offers. Favourite is a button, never a gesture. */
 enum class DeckAction { KEEP, BIN, SHRINK }
 
+/** The axis a drag has committed to. A card slides along one, never diagonally. */
+enum class DragAxis { HORIZONTAL, VERTICAL }
+
+/**
+ * Which axis a drag has committed to, or null while it is still inside [slopPx].
+ *
+ * The card is locked to one axis rather than tracking the finger freely: a free
+ * diagonal makes it ambiguous which action is armed, and the overlays cross-fade
+ * against each other. Horizontal wins ties, matching [resolveDeckAction].
+ *
+ * Callers latch the first non-null result for the rest of the gesture -- a
+ * mid-drag axis flip is exactly the wandering this prevents.
+ */
+fun dragAxis(dx: Float, dy: Float, slopPx: Float): DragAxis? = when {
+    maxOf(abs(dx), abs(dy)) < slopPx -> null
+    abs(dx) >= abs(dy) -> DragAxis.HORIZONTAL
+    else -> DragAxis.VERTICAL
+}
+
+/**
+ * How far ahead a release's velocity is projected when deciding whether it
+ * commits, in seconds.
+ *
+ * Distance alone punishes fast users: a confident flick travels barely any
+ * distance before the finger leaves the glass, and would spring back as though
+ * they had not decided. Projecting where the card would be a moment later lets a
+ * short fast flick and a long slow drag both commit, without a second threshold
+ * to keep in sync with the first.
+ *
+ * ponytail: a knob. 0.15s is the starting point -- raise it if flicks still feel
+ * like they are being ignored, lower it if cards commit when the user meant to
+ * peek and pull back.
+ */
+var FlingProjectionSeconds: Float = 0.15f
+
 /**
  * Which action a released drag commits to, or null to spring back.
- *
- * Horizontal wins ties, so an ambiguous diagonal resolves to the common,
- * reversible outcome rather than queueing a rewrite of the file.
  *
  * Thresholds are asymmetric on purpose -- 92dp across, 110dp down. Shrink is the
  * only action that rewrites bytes, so it asks for a more deliberate drag.
  *
+ * Velocity is projected forward by [FlingProjectionSeconds] and tested against
+ * the same threshold, so there is one number to tune rather than a distance
+ * threshold and a fling threshold that can disagree. A flick back the other way
+ * therefore wins over the distance already travelled, which is correct: the last
+ * thing the user did was throw the card that way.
+ *
  * Swipe down is context-aware across the app: it shrinks here, and closes the
  * full-screen viewer. Only the deck calls this.
  *
+ * @param axis the latched [dragAxis]. Null derives it from the offset, which is
+ *   what the unit tests and any non-gesture caller want.
  * @param shrinkEnabled false for video cards. Media3 Transformer runs at roughly
  *   realtime/4, so video shrink is out of v1 (addendum A4) -- a downward drag on
  *   a video springs back rather than committing.
@@ -26,13 +66,22 @@ fun resolveDeckAction(
     dy: Float,
     horizontalThresholdPx: Float,
     verticalThresholdPx: Float,
+    velocityX: Float = 0f,
+    velocityY: Float = 0f,
+    axis: DragAxis? = null,
     shrinkEnabled: Boolean = true,
 ): DeckAction? {
-    val horizontal = abs(dx) >= abs(dy)
+    val horizontal = when (axis) {
+        DragAxis.HORIZONTAL -> true
+        DragAxis.VERTICAL -> false
+        null -> abs(dx) >= abs(dy)
+    }
+    val projectedX = dx + velocityX * FlingProjectionSeconds
+    val projectedY = dy + velocityY * FlingProjectionSeconds
     return when {
-        horizontal && dx >= horizontalThresholdPx -> DeckAction.KEEP
-        horizontal && dx <= -horizontalThresholdPx -> DeckAction.BIN
-        !horizontal && shrinkEnabled && dy >= verticalThresholdPx -> DeckAction.SHRINK
+        horizontal && projectedX >= horizontalThresholdPx -> DeckAction.KEEP
+        horizontal && projectedX <= -horizontalThresholdPx -> DeckAction.BIN
+        !horizontal && shrinkEnabled && projectedY >= verticalThresholdPx -> DeckAction.SHRINK
         else -> null
     }
 }
