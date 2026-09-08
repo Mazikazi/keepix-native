@@ -12,6 +12,7 @@ import com.sese.keepix.data.MediaPageKey
 import com.sese.keepix.data.MediaRepository
 import com.sese.keepix.data.MediaAccessException
 import com.sese.keepix.db.AppDatabase
+import com.sese.keepix.db.CompressedItemEntity
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.core.logic.QualityTier
@@ -81,6 +82,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     val prefs = KeepixPreferences(application)
 
     private val compressionJournalDao = AppDatabase.getDatabase(application).compressionJournalDao()
+    private val compressedItemDao = AppDatabase.getDatabase(application).compressedItemDao()
 
     private val photoCompressor = PhotoCompressor(
         io = ContentResolverMediaFileIo(application),
@@ -493,6 +495,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun markForDeletion(mediaItem: MediaItem) {
+        recordSwipe()
         viewModelScope.launch {
             addToBin(mediaItem)
         }
@@ -547,6 +550,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun keepMedia(mediaItem: MediaItem) {
+        recordSwipe()
         viewModelScope.launch {
             keptItemDao.insert(
                 KeptItemEntity(
@@ -567,8 +571,73 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Binned rows whose file is still sitting in the user's gallery.
+     *
+     * Binning is supposed to mean "gone from my photos". Until MediaStore has
+     * been told to trash the file it is still in the gallery and in Google
+     * Photos, so the Activity turns this into a `createTrashRequest` and calls
+     * [confirmTrashed] with whatever the user approved. Trashing does not free
+     * any space -- the bytes stay until a permanent delete -- it only hides the
+     * file, which is exactly what the bin promises.
+     */
+    val untrashedBinItems: StateFlow<List<BinItemEntity>> = binItemDao.getUntrashed()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _trashPromptedThisSession = MutableStateFlow(false)
+    val trashPromptedThisSession: StateFlow<Boolean> = _trashPromptedThisSession.asStateFlow()
+
+    /** The user approved the trash request for these rows. */
+    fun confirmTrashed(ids: List<Long>) {
+        viewModelScope.launch { binItemDao.markTrashed(ids) }
+    }
+
+    /**
+     * The user declined, or the request could not be launched. Nothing is
+     * marked -- the rows stay in [untrashedBinItems] and are offered again on
+     * the next launch -- but the prompt is latched for this session so a
+     * decline is not re-asked immediately.
+     */
+    fun deferTrash() {
+        _trashPromptedThisSession.value = true
+    }
+
+    /**
+     * Restores waiting on a system untrash confirmation.
+     *
+     * A row stays in the bin until its file is actually back in the gallery. If
+     * the row were dropped first and the user then cancelled the dialog, the
+     * photo would be invisible in both places -- gone from Keepix and still in
+     * the system trash -- with nothing left to retry it.
+     */
+    private val _pendingUntrash = MutableStateFlow<List<BinItemEntity>>(emptyList())
+    val pendingUntrash: StateFlow<List<BinItemEntity>> = _pendingUntrash.asStateFlow()
+
     fun restoreItem(item: BinItemEntity) {
-        viewModelScope.launch {
+        if (item.trashed) {
+            // Needs the file put back before the row goes; see [_pendingUntrash].
+            if (_pendingUntrash.value.none { it.id == item.id }) {
+                _pendingUntrash.value = _pendingUntrash.value + item
+            }
+            return
+        }
+        viewModelScope.launch { completeRestore(listOf(item)) }
+    }
+
+    /** The system put these files back. Now the rows can go. */
+    fun confirmUntrash(items: List<BinItemEntity>) {
+        val ids = items.map { it.id }.toSet()
+        _pendingUntrash.value = _pendingUntrash.value.filterNot { it.id in ids }
+        viewModelScope.launch { completeRestore(items) }
+    }
+
+    /** The user cancelled. The rows stay binned, exactly as they were. */
+    fun cancelUntrash() {
+        _pendingUntrash.value = emptyList()
+    }
+
+    private suspend fun completeRestore(items: List<BinItemEntity>) {
+        items.forEach { item ->
             binItemDao.delete(item)
             binMediaIds = binMediaIds - item.mediaId
             spliceIntoQueue(item.toMediaItem())
@@ -984,19 +1053,68 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     private val _shrinkQueue = MutableStateFlow<List<String>>(emptyList())
 
+    /**
+     * Display names for the URIs in flight, captured at queue time.
+     *
+     * By the time a shrink finishes, its card is long gone from [_mediaItems]
+     * and MediaStore only knows the new file -- so the name has to be carried
+     * along or the Compressed tab shows a row of bare ids. Entries are dropped
+     * once written; a URI with no entry falls back to its last path segment.
+     */
+    private val shrinkNames = mutableMapOf<String, String>()
+
     /** Queued-but-unwritten count, for the deck's "Shrinking N" chip. */
     val shrinkQueueCount: StateFlow<Int> =
         _shrinkQueue.map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
-    // Light-tier uses spent, the third argument to [canUseTier].
-    //
-    // ponytail: in memory, so the daily cap is really "3 per process launch"
-    // until there is somewhere to keep it. KeepixPreferences stores no Pro flag,
-    // no per-day use count and no streak credits, and inventing that schema here
-    // is work the paywall would have to undo. The gate below is a real
-    // [canUseTier] call, so wiring it up later means replacing these three
-    // arguments -- the rule itself does not move.
-    private var lightUsesToday = 0
+    // Light-tier uses spent today, the third argument to [canUseTier]. Backed by
+    // KeepixPreferences, which resets it at local midnight, so the cap really is
+    // per day rather than per process launch.
+    private var lightUsesToday: Int
+        get() = prefs.lightUsesToday
+        set(value) { prefs.lightUsesToday = value }
+
+    /**
+     * Raised when a shrink was refused because the free allowance is spent, so
+     * the deck can open the paywall instead of silently springing the card back.
+     * Cleared by [dismissPaywall].
+     */
+    private val _paywallRequested = MutableStateFlow(false)
+    val paywallRequested: StateFlow<Boolean> = _paywallRequested.asStateFlow()
+
+    fun requestPaywall() { _paywallRequested.value = true }
+    fun dismissPaywall() { _paywallRequested.value = false }
+
+    private val _streakDays = MutableStateFlow(prefs.streakDays)
+    val streakDays: StateFlow<Int> = _streakDays.asStateFlow()
+
+    /**
+     * Cards acted on since the process started, for the Rank tab's "N swipes".
+     *
+     * ponytail: session-scoped, not a rolling seven days -- there is no
+     * per-swipe log to roll up, and adding one to label a screen that has no
+     * leaderboard to compare against yet is a table nobody reads.
+     */
+    val weeklySwipes: StateFlow<Int> = combine(
+        _sessionKeptCount, _deletedCount,
+    ) { kept, deleted -> kept + deleted }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    /** Every verified shrink, newest first, for the Compressed tab. */
+    val compressedItems: StateFlow<List<CompressedItemEntity>> = compressedItemDao.getAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val totalBytesSaved: StateFlow<Long> = compressedItemDao.getTotalSaved()
+        .map { it ?: 0L }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    /**
+     * Records that the user acted on a card today. Called from every deck
+     * commit, and idempotent within a day -- see [KeepixPreferences.recordSwipeToday].
+     */
+    private fun recordSwipe() {
+        _streakDays.value = prefs.recordSwipeToday()
+    }
 
     /**
      * Queues one card's shrink. Touches no disk -- see [_shrinkQueue].
@@ -1010,15 +1128,39 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun queueCompression(item: MediaItem): Boolean {
         if (item.isVideo) return false
+        recordSwipe()
         val queue = _shrinkQueue.value
         val uri = item.uri.toString()
         if (uri in queue || queue.size >= MAX_COMPRESSION_BATCH) return false
-        // ponytail: isPro/freeMaxCredits hardcoded -- see [lightUsesToday]. Only
-        // LIGHT is offered in v1, so a missing Max credit cannot be reached here.
-        if (!canUseTier(QualityTier.LIGHT, isPro = false, lightUsesToday, freeMaxCredits = 0)) {
+        if (!canUseTier(prefs.qualityTier, prefs.isPro, lightUsesToday, prefs.freeMaxCredits)) {
+            // Refusing silently is what made a spent allowance look like a bug.
+            // The deck springs the card back on `false`; this is what tells the
+            // user why.
+            _paywallRequested.value = true
             return false
         }
         lightUsesToday++
+        shrinkNames[uri] = item.displayName
+        _shrinkQueue.value = queue + uri
+        return true
+    }
+
+    /**
+     * The library's bulk shrink. Same gate, same queue as a shrink swipe -- the
+     * daily allowance does not care which screen spent it -- but it does NOT
+     * count as a swipe, so it cannot pad the streak.
+     */
+    fun queueKeptCompression(item: KeptItemEntity): Boolean {
+        val queue = _shrinkQueue.value
+        val uri = item.mediaUri
+        if (item.mediaType == "VIDEO") return false
+        if (uri in queue || queue.size >= MAX_COMPRESSION_BATCH) return false
+        if (!canUseTier(prefs.qualityTier, prefs.isPro, lightUsesToday, prefs.freeMaxCredits)) {
+            _paywallRequested.value = true
+            return false
+        }
+        lightUsesToday++
+        shrinkNames[uri] = item.displayName
         _shrinkQueue.value = queue + uri
         return true
     }
@@ -1035,6 +1177,7 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
         val uri = item.uri.toString()
         if (uri !in _shrinkQueue.value) return
         _shrinkQueue.value = _shrinkQueue.value - uri
+        shrinkNames.remove(uri)
         lightUsesToday = (lightUsesToday - 1).coerceAtLeast(0)
     }
 
@@ -1142,6 +1285,21 @@ class KeepixViewModel(application: Application) : AndroidViewModel(application) 
                                 is CompressionOutcome.Compressed -> {
                                     compressed++
                                     saved += outcome.bytesSaved
+                                    // Recorded only here, after the read-back
+                                    // verified the rewrite -- a row in this
+                                    // table is a promise the file on disk really
+                                    // is the smaller one.
+                                    compressedItemDao.upsert(
+                                        CompressedItemEntity(
+                                            mediaUri = uri,
+                                            displayName = shrinkNames.remove(uri)
+                                                ?: uri.substringAfterLast('/'),
+                                            beforeBytes = outcome.originalBytes.toLong(),
+                                            afterBytes = (outcome.originalBytes - outcome.bytesSaved)
+                                                .toLong().coerceAtLeast(0L),
+                                            tier = prefs.qualityTier.label,
+                                        )
+                                    )
                                 }
                                 is CompressionOutcome.Failed -> failed++
                                 is CompressionOutcome.Skipped -> Unit

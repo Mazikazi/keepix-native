@@ -8,14 +8,20 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [BinItemEntity::class, KeptItemEntity::class, CompressionJournalEntity::class],
-    version = 7,
+    entities = [
+        BinItemEntity::class,
+        KeptItemEntity::class,
+        CompressionJournalEntity::class,
+        CompressedItemEntity::class,
+    ],
+    version = 8,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun binItemDao(): BinItemDao
     abstract fun keptItemDao(): KeptItemDao
     abstract fun compressionJournalDao(): CompressionJournalDao
+    abstract fun compressedItemDao(): CompressedItemDao
 
     companion object {
         /**
@@ -81,6 +87,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the `compressed_items` table, which backs the Compressed tab.
+         * Purely additive. An upgraded install starts with an empty history and
+         * "0 B saved", which is the honest answer -- nothing before this shipped
+         * was ever recorded, so any other starting number would be invented.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `compressed_items` (
+                        `mediaUri` TEXT NOT NULL,
+                        `displayName` TEXT NOT NULL,
+                        `beforeBytes` INTEGER NOT NULL,
+                        `afterBytes` INTEGER NOT NULL,
+                        `tier` TEXT NOT NULL,
+                        `compressedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`mediaUri`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -91,7 +121,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "keepix_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(
+                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                        MIGRATION_6_7, MIGRATION_7_8,
+                    )
                     .build()
                 INSTANCE = instance
                 instance

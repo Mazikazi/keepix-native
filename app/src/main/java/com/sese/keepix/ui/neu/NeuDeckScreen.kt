@@ -601,74 +601,13 @@ private fun DeckHeader(
     onUndo: () -> Unit,
     onOpenLibrary: () -> Unit,
 ) {
-    val c = neu
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        // Inset, not extruded: the streak chip is carved, per the prototype.
-        Row(
-            Modifier
-                .neuInset(CircleShape, offset = 3.dp, blur = 6.dp)
-                .padding(start = 11.dp, end = 15.dp, top = 9.dp, bottom = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("◆", style = NeuType.buttonLabel, color = c.accent)
-            Text("$streakDays", style = NeuType.sectionHeader, color = c.textPrimary)
-            Text("day streak", style = NeuType.metadata, color = c.textSecondary)
-        }
-
-        Box(Modifier.weight(1f))
-
-        if (queuedCount > 0) {
-            Row(
-                Modifier
-                    .neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp)
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(Modifier.size(8.dp).background(c.accent, CircleShape))
-                Text("Shrinking $queuedCount", style = NeuType.buttonLabel, color = c.textPrimary)
-            }
-        }
-
+    // The strip itself is shared with every other tab (NeuChrome), so switching
+    // tabs cannot shift it by a pixel. Only the undo ring is the deck's own.
+    NeuHeader(streakDays, queuedCount, onOpenLibrary) {
         if (pending != null) UndoRing(pending, onUndo)
-
-        // 2x2 grid of 5dp squares with 3dp gaps -- CSS shapes in the prototype,
-        // so there is no icon asset to port.
-        Box(
-            Modifier
-                .size(44.dp)
-                .neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp)
-                .clickable(onClick = onOpenLibrary),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                repeat(2) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        repeat(2) {
-                            Box(
-                                Modifier
-                                    .size(5.dp)
-                                    .background(c.textSecondary, RoundedCornerShape(1.5.dp)),
-                            )
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
-/**
- * The countdown. A violet arc sweeping 360 -> 0, and no numerals -- the arc is
- * the only indicator the design gives.
- */
 @Composable
 private fun UndoRing(pending: PendingCommit, onUndo: () -> Unit) {
     val c = neu

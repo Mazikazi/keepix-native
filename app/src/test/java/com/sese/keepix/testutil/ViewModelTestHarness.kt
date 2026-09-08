@@ -5,6 +5,7 @@ import com.sese.keepix.data.KeepixPreferences
 import com.sese.keepix.data.MediaItem
 import com.sese.keepix.data.MediaRepository
 import com.sese.keepix.db.BinItemDao
+import com.sese.keepix.db.CompressedItemDao
 import com.sese.keepix.db.CompressionJournalDao
 import com.sese.keepix.db.KeptItemDao
 import com.sese.keepix.ui.KeepixViewModel
@@ -117,7 +118,8 @@ object ViewModelTestHarness {
         keptItemDao: KeptItemDao = mockk(relaxed = true),
         prefs: KeepixPreferences = fakePrefs(),
         photoCompressor: PhotoCompressor = mockk(relaxed = true),
-        compressionJournalDao: CompressionJournalDao = mockk(relaxed = true)
+        compressionJournalDao: CompressionJournalDao = mockk(relaxed = true),
+        compressedItemDao: CompressedItemDao = mockk(relaxed = true),
     ): KeepixViewModel {
         val vm = allocate()
         setField(vm, "repository", repository)
@@ -125,6 +127,13 @@ object ViewModelTestHarness {
         setField(vm, "keptItemDao", keptItemDao)
         setField(vm, "prefs", prefs)
         setField(vm, "compressionJournalDao", compressionJournalDao)
+        setField(vm, "compressedItemDao", compressedItemDao)
+        // Shrink-path fields. lightUsesToday is deliberately NOT here: it is a
+        // property over `prefs`, not a field, so a test that wants a spent
+        // allowance seeds the fake prefs instead.
+        setField(vm, "shrinkNames", mutableMapOf<String, String>())
+        setField(vm, "_paywallRequested", MutableStateFlow(false))
+        setField(vm, "_streakDays", MutableStateFlow(0))
         setField(vm, "_mediaItems", MutableStateFlow<List<MediaItem>>(emptyList()))
         setField(vm, "_isLoading", MutableStateFlow(false))
         val error = MutableStateFlow<String?>(null)

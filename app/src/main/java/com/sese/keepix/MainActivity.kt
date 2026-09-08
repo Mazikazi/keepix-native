@@ -36,6 +36,8 @@ import androidx.navigation.navArgument
 import com.sese.keepix.ui.*
 import com.sese.keepix.ui.theme.DarkBackground
 import com.sese.keepix.ui.theme.KeepixTheme
+import com.sese.keepix.ui.neu.*
+import com.sese.keepix.core.logic.DeckAction
 import com.sese.keepix.db.BinItemEntity
 import com.sese.keepix.db.KeptItemEntity
 import com.sese.keepix.utils.MediaDeletionHandler
@@ -201,8 +203,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            KeepixTheme {
-                com.sese.keepix.ui.components.GlassBackground {
+            // Soft UI: every surface is moulded from one colour, so the app's
+            // root IS that colour. There is no background layer to composite.
+            NeuTheme {
+                Surface(color = neu.surface, modifier = Modifier.fillMaxSize()) {
                     KeepixApp(viewModel)
                 }
             }
@@ -315,6 +319,14 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     // `(runIds ?: ids)` fallback then compares against the sent chunk alone,
     // which can cause one extra, harmless re-prompt, never a lost row.
     var favoriteRunIds by remember { mutableStateOf<List<Int>?>(null) }
+
+    // Guards for the two MediaStore trash requests (hide on bin, restore out of
+    // the trash). Declared up here, beside the other in-flight guards, so the
+    // ON_RESUME stuck-guard below can clear them -- a launch dropped by
+    // background-activity-start restrictions never delivers a result, and a
+    // latched guard would hold the shared dialog gate shut for every prompt.
+    var trashInFlightIds by remember { mutableStateOf<List<Long>?>(null) }
+    var untrashInFlight by remember { mutableStateOf<List<BinItemEntity>?>(null) }
 
     // Guards the write-request (compression/recovery) effect against a second
     // launch while one is already in flight. Declared up here, not beside that
@@ -451,6 +463,18 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                     if (favoriteInFlightIds != null) {
                         favoriteInFlightIds = null
                         favoriteRunIds = null
+                    }
+                    // Same recovery for the two trash requests. Neither is
+                    // destructive -- an un-recovered trash guard would only stop
+                    // the file being hidden, and an un-recovered untrash guard
+                    // would leave the row binned -- but both would latch the
+                    // shared gate below if left set.
+                    if (trashInFlightIds != null) {
+                        trashInFlightIds = null
+                    }
+                    if (untrashInFlight != null) {
+                        untrashInFlight = null
+                        viewModel.cancelUntrash()
                     }
                     // Same recovery for the write-request (compression/recovery)
                     // effect's guard. More important to catch here than for the
@@ -901,6 +925,104 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
     }
 
+    // --- MediaStore trash -------------------------------------------------
+    //
+    // Binning is supposed to mean "gone from my photos", and until MediaStore
+    // is told to trash the file it is still in the gallery and in Google
+    // Photos. Both directions go through the same shared gate as the delete,
+    // favorite and write prompts: launching two IntentSenders in one frame
+    // makes Android show one and silently drop the other.
+    //
+    // Trashing does not free space -- the bytes stay until a permanent delete,
+    // which is still the deletion flow above.
+    val untrashedBinItems by viewModel.untrashedBinItems.collectAsState()
+    val trashPrompted by viewModel.trashPromptedThisSession.collectAsState()
+    val pendingUntrash by viewModel.pendingUntrash.collectAsState()
+
+    val trashResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val ids = trashInFlightIds
+        trashInFlightIds = null
+        systemDialogInFlight = false
+        if (ids != null) {
+            if (result.resultCode == Activity.RESULT_OK) viewModel.confirmTrashed(ids)
+            // A decline marks nothing: the rows stay queued and are offered
+            // again next launch. Latching the prompt for this session is what
+            // stops it re-opening the instant this effect re-runs.
+            else viewModel.deferTrash()
+        }
+    }
+
+    val untrashResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val items = untrashInFlight
+        untrashInFlight = null
+        systemDialogInFlight = false
+        if (items != null) {
+            if (result.resultCode == Activity.RESULT_OK) viewModel.confirmUntrash(items)
+            // Cancel leaves the rows binned and the files in the system trash --
+            // which is consistent, and recoverable, unlike dropping the row
+            // first and stranding the photo in neither place.
+            else viewModel.cancelUntrash()
+        }
+    }
+
+    LaunchedEffect(untrashedBinItems, trashPrompted, hasPermission, resumeTick, systemDialogInFlight) {
+        if (!hasPermission || trashPrompted) return@LaunchedEffect
+        if (systemDialogInFlight || trashInFlightIds != null) return@LaunchedEffect
+        if (untrashedBinItems.isEmpty()) return@LaunchedEffect
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+        // Same Binder-transaction cap as the delete and favorite requests, for
+        // the same reason; the remainder is picked up on the next pass.
+        val batch = untrashedBinItems.take(MAX_DELETE_REQUEST_BATCH)
+        if (systemDialogInFlight || trashInFlightIds != null) return@LaunchedEffect
+        try {
+            val intent = MediaDeletionHandler.getTrashIntent(
+                context, batch.map { Uri.parse(it.mediaUri) }, trashed = true
+            )
+            trashInFlightIds = batch.map { it.id }
+            systemDialogInFlight = true
+            trashResultLauncher.launch(IntentSenderRequest.Builder(intent.intentSender).build())
+        } catch (e: Exception) {
+            // createTrashRequest is a synchronous call into MediaProvider and can
+            // throw. Release both flags or a throw latches the gate and kills
+            // every other prompt for the rest of the process.
+            Log.e(TAG, "Failed to build/launch the system trash request", e)
+            trashInFlightIds = null
+            systemDialogInFlight = false
+            viewModel.deferTrash()
+        }
+    }
+
+    LaunchedEffect(pendingUntrash, hasPermission, resumeTick, systemDialogInFlight) {
+        if (!hasPermission) return@LaunchedEffect
+        if (systemDialogInFlight || untrashInFlight != null) return@LaunchedEffect
+        if (pendingUntrash.isEmpty()) return@LaunchedEffect
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return@LaunchedEffect
+        }
+        val batch = pendingUntrash.take(MAX_DELETE_REQUEST_BATCH)
+        if (systemDialogInFlight || untrashInFlight != null) return@LaunchedEffect
+        try {
+            val intent = MediaDeletionHandler.getTrashIntent(
+                context, batch.map { Uri.parse(it.mediaUri) }, trashed = false
+            )
+            untrashInFlight = batch
+            systemDialogInFlight = true
+            untrashResultLauncher.launch(IntentSenderRequest.Builder(intent.intentSender).build())
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build/launch the system untrash request", e)
+            untrashInFlight = null
+            systemDialogInFlight = false
+            viewModel.cancelUntrash()
+            viewModel.reportError("Couldn't open the restore confirmation. Please try again.")
+        }
+    }
+
     // Collect state
     val mediaItems by viewModel.mediaItems.collectAsState()
     val binItems by viewModel.binItems.collectAsState()
@@ -938,22 +1060,55 @@ fun KeepixApp(viewModel: KeepixViewModel) {
     val startDestination = when {
         !hasPermission -> "permission"
         !viewModel.prefs.onboardingComplete -> "onboarding"
-        else -> "swipe"
+        else -> "home"
+    }
+
+    // Tab selection is composition state, not a nav destination: the tab bar is
+    // a switch, not a back stack, and making it one would have the system back
+    // button unwind through tabs the user never thought of as steps.
+    var tab by rememberSaveable { mutableStateOf(NeuTab.SWIPE) }
+    var homeToast by remember { mutableStateOf<NeuHomeToast?>(null) }
+
+    val compressedItems by viewModel.compressedItems.collectAsState()
+    val totalBytesSaved by viewModel.totalBytesSaved.collectAsState()
+    val shrinkQueueCount by viewModel.shrinkQueueCount.collectAsState()
+    val streakDays by viewModel.streakDays.collectAsState()
+    val weeklySwipes by viewModel.weeklySwipes.collectAsState()
+    val paywallRequested by viewModel.paywallRequested.collectAsState()
+    // Preferences have no observability of their own, so every writer below
+    // bumps this and the reads re-run. Cheaper and less error-prone than
+    // mirroring six values into six pieces of state that can drift apart.
+    var settingsRevision by remember { mutableIntStateOf(0) }
+    val retentionDays = remember(settingsRevision) { viewModel.prefs.retentionDays }
+    val qualityTier = remember(settingsRevision) { viewModel.prefs.qualityTier }
+    val isPro = remember(settingsRevision) { viewModel.prefs.isPro }
+    val accountEnabled = remember(settingsRevision) { viewModel.prefs.accountEnabled }
+    val librarySortLargest = remember(settingsRevision) { viewModel.prefs.librarySortLargestFirst }
+    val lightUsesToday = remember(settingsRevision, shrinkQueueCount) {
+        viewModel.prefs.lightUsesToday
     }
 
     NavHost(navController = navController, startDestination = startDestination) {
 
         composable("permission") {
-            PermissionScreen(
+            NeuPermissionScreen(
                 onRequestPermission = {
                     // Single source of truth shared with checkMediaPermission
-                    // and the rationale checks above — hand-rolling this array
+                    // and the rationale checks above -- hand-rolling this array
                     // a second time is exactly the kind of drift that caused
                     // the original P0 (a request array out of sync with what
                     // the manifest declares).
                     permissionLauncher.launch(requiredMediaPermissions())
                 },
-                isPermanentlyDenied = isPermanentlyDenied
+                isPermanentlyDenied = isPermanentlyDenied,
+                onOpenSettings = {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null),
+                        )
+                    )
+                },
             )
 
             // Navigate away when permission is granted
@@ -964,7 +1119,7 @@ fun KeepixApp(viewModel: KeepixViewModel) {
                             popUpTo("permission") { inclusive = true }
                         }
                     } else {
-                        navController.navigate("swipe") {
+                        navController.navigate("home") {
                             popUpTo("permission") { inclusive = true }
                         }
                     }
@@ -973,94 +1128,141 @@ fun KeepixApp(viewModel: KeepixViewModel) {
         }
 
         composable("onboarding") {
-            OnboardingScreen(
+            NeuOnboardingScreen(
+                retentionDays = retentionDays,
+                batchSize = viewModel.prefs.batchSize,
                 onComplete = {
                     viewModel.prefs.onboardingComplete = true
-                    navController.navigate("swipe") {
+                    navController.navigate("home") {
                         popUpTo("onboarding") { inclusive = true }
                     }
-                }
+                },
             )
         }
 
-        composable("swipe") {
-            SwipeScreen(
+        composable("home") {
+            NeuHomeScreen(
+                tab = tab,
+                onTabChange = { tab = it },
                 mediaItems = mediaItems,
-                onSwipedLeft = { item -> viewModel.markForDeletion(item) },
-                onSwipedRight = { item -> viewModel.keepMedia(item) },
-                onSwipedUp = { item -> viewModel.favoriteMedia(item) },
-                onNavigateToBin = { navController.navigate("bin") },
-                onNavigateToKept = { navController.navigate("kept") },
-                onNavigateToSettings = { navController.navigate("settings") },
-                onCardBoundsChanged = { bounds -> selectedMediaBounds = bounds },
+                onCommit = { item, action ->
+                    when (action) {
+                        DeckAction.KEEP -> viewModel.keepMedia(item)
+                        DeckAction.BIN -> {
+                            viewModel.markForDeletion(item)
+                            homeToast = NeuHomeToast(
+                                "Moved to the bin",
+                                NeuToastKind.DELETED,
+                                actionLabel = "View",
+                            )
+                        }
+                        DeckAction.SHRINK -> {
+                            // queueCompression opens the paywall itself when the
+                            // allowance is spent; the toast is only for success.
+                            if (viewModel.queueCompression(item)) {
+                                homeToast = NeuHomeToast(
+                                    "Queued for shrinking", NeuToastKind.COMPRESSED,
+                                )
+                            }
+                            settingsRevision++
+                        }
+                    }
+                },
                 onTapCard = { item ->
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.uri.toString())}/${item.isVideo}/${ViewerMode.SWIPE.routeKey}"
                     )
                 },
-                binCount = binCount,
-                keptCount = keptItemCount,
-                sessionKeptCount = sessionKeptCount,
-                deletedCount = deletedCount,
+                onToggleFavorite = { item -> viewModel.favoriteMedia(item) },
+                isFavorite = { item ->
+                    keptItems.any { it.mediaUri == item.uri.toString() && it.isFavorite }
+                },
+                onOpenLibrary = { navController.navigate("library") },
+                onCardBoundsChanged = { bounds -> selectedMediaBounds = bounds },
+                isFullscreenOpen = isFullscreenOpen,
+                isLoading = isLoading,
+                hasLoadedOnce = hasLoadedOnce,
+                reachedEnd = reachedEnd,
                 error = error,
                 onErrorDismiss = { viewModel.clearError() },
-                isLoading = isLoading,
-                reachedEnd = reachedEnd,
-                hasLoadedOnce = hasLoadedOnce,
                 onRetry = { viewModel.loadMedia() },
-                isFullscreenOpen = isFullscreenOpen,
-                hasOnlyPartialMediaAccess = hasOnlyPartialAccess
-            )
-        }
-
-        composable("bin") {
-            RecycleBinScreen(
-                items = binItems,
+                hasOnlyPartialMediaAccess = hasOnlyPartialAccess,
+                binItems = binItems,
                 isSessionMode = viewModel.prefs.isSessionMode,
                 onRestore = { item -> viewModel.restoreItem(item) },
-                onDeleteConfirmed = { viewModel.deleteBinItems(binItems) },
-                onDeleteSelected = { selected -> viewModel.deleteBinItems(selected) },
-                onItemTap = { item ->
+                onDelete = { items -> viewModel.deleteBinItems(items) },
+                onOpenBinItem = { item ->
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.BIN.routeKey}"
                     )
                 },
-                onBack = { navController.popBackStack() }
+                compressedItems = compressedItems,
+                totalBytesSaved = totalBytesSaved,
+                queuedCount = shrinkQueueCount,
+                streakDays = streakDays,
+                weeklySwipes = weeklySwipes,
+                retentionDays = retentionDays,
+                onRetentionChanged = {
+                    viewModel.prefs.retentionDays = it
+                    settingsRevision++
+                },
+                tier = qualityTier,
+                onTierChanged = {
+                    viewModel.prefs.qualityTier = it
+                    settingsRevision++
+                },
+                isPro = isPro,
+                lightUsesToday = lightUsesToday,
+                onOpenPaywall = { viewModel.requestPaywall() },
+                accountEnabled = accountEnabled,
+                onAccountChanged = {
+                    viewModel.prefs.accountEnabled = it
+                    settingsRevision++
+                },
+                batchSize = viewModel.prefs.batchSize,
+                toast = homeToast,
+                onToastExpired = { homeToast = null },
             )
+
+            if (paywallRequested) {
+                NeuPaywallSheet(
+                    streakDays = streakDays,
+                    onDismiss = { viewModel.dismissPaywall() },
+                    // No billing client in this build. A button that pretends to
+                    // charge is worse than one that says it is not on sale yet.
+                    onSubscribe = null,
+                )
+            }
         }
 
-        composable("kept") {
-            KeptItemsScreen(
+        composable("library") {
+            NeuLibraryScreen(
                 items = keptItems,
-                onUnkeep = { item -> viewModel.unkeepItem(item) },
-                onToggleFavorite = { item -> viewModel.toggleFavorite(item) },
-                onItemTap = { item ->
+                remainingInDeck = mediaItems.size,
+                largestFirst = librarySortLargest,
+                onSortChanged = {
+                    viewModel.prefs.librarySortLargestFirst = it
+                    settingsRevision++
+                },
+                onOpenItem = { item ->
                     navController.navigate(
                         "fullscreen/${Uri.encode(item.mediaUri)}/${item.mediaType == "VIDEO"}/${ViewerMode.KEPT.routeKey}"
                     )
                 },
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable("settings") {
-            val reclaimEstimate by viewModel.compressionEstimate.collectAsState()
-            val scanProgress by viewModel.compressionScanProgress.collectAsState()
-            val compressionStatus by viewModel.compressionStatus.collectAsState()
-
-            SettingsScreen(
-                currentRetentionDays = viewModel.prefs.retentionDays,
-                binCount = binCount,
-                onRetentionChanged = { days -> viewModel.prefs.retentionDays = days },
-                onEmptyBin = { viewModel.deleteBinItems(binItems) },
-                hasOnlyPartialMediaAccess = hasOnlyPartialAccess,
-                reclaimEstimate = reclaimEstimate,
-                scanProgress = scanProgress,
-                compressionStatus = compressionStatus,
-                onScanForReclaimableSpace = { viewModel.scanForReclaimableSpace() },
-                onCancelScan = { viewModel.cancelCompressionScan() },
-                onOptimize = { viewModel.requestCompression() },
-                onBack = { navController.popBackStack() }
+                onBin = { items -> items.forEach { viewModel.deleteKeptItem(it) } },
+                onShrink = { items ->
+                    // Same gate as a shrink swipe -- the allowance does not care
+                    // which screen spent it -- and one flush, so the batch costs
+                    // one write dialog rather than one per photo.
+                    items.forEach { viewModel.queueKeptCompression(it) }
+                    viewModel.flushCompressionQueue()
+                    settingsRevision++
+                },
+                onBack = { navController.popBackStack() },
+                onReviewBin = {
+                    tab = NeuTab.BIN
+                    navController.popBackStack()
+                },
             )
         }
 

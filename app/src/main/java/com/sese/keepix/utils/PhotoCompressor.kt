@@ -20,7 +20,16 @@ private const val TAG = "PhotoCompressor"
 sealed interface CompressionOutcome {
     val uriString: String
 
-    data class Compressed(override val uriString: String, val bytesSaved: Int) : CompressionOutcome
+    data class Compressed(
+        override val uriString: String,
+        val bytesSaved: Int,
+        /**
+         * Size of the file going into this pass. Carried out so the Compressed
+         * tab can show a real before/after pair without re-reading the file --
+         * by the time the caller sees this, the original is already gone.
+         */
+        val originalBytes: Int = 0,
+    ) : CompressionOutcome
     data class Skipped(override val uriString: String, val reason: String) : CompressionOutcome
     data class Failed(
         override val uriString: String,
@@ -226,7 +235,7 @@ class PhotoCompressor(
         // Committed. Release the backup last -- while it exists, the file is
         // recoverable no matter what happens.
         releaseBackup(uriString, backup)
-        return CompressionOutcome.Compressed(uriString, plan.bytesSaved)
+        return CompressionOutcome.Compressed(uriString, plan.bytesSaved, original.size)
     }
 
     /**

@@ -77,7 +77,6 @@ class ShrinkQueueTest {
         val vm = ViewModelTestHarness.newViewModel()
         val queue = MutableStateFlow<List<String>>(emptyList())
         ViewModelTestHarness.setField(vm, "_shrinkQueue", queue)
-        ViewModelTestHarness.setField(vm, "lightUsesToday", 0)
         return vm
     }
 

@@ -11,10 +11,16 @@ enum class QualityTier(
     /** Longest edge in px, or null to leave dimensions untouched. */
     val longestEdge: Int?,
     val proOnly: Boolean,
+    /**
+     * Typical size reduction, shown under the tier's name in Settings. A
+     * ballpark from the prototype, not a promise -- the actual saving depends
+     * entirely on the source photo, which is why it is worded with a tilde.
+     */
+    val savingsTag: String,
 ) {
-    LIGHT("Light", quality = 80, longestEdge = null, proOnly = false),
-    BALANCED("Balanced", quality = 65, longestEdge = 3072, proOnly = true),
-    MAX("Max", quality = 50, longestEdge = 2048, proOnly = true),
+    LIGHT("Light", quality = 80, longestEdge = null, proOnly = false, savingsTag = "~58%"),
+    BALANCED("Balanced", quality = 65, longestEdge = 3072, proOnly = true, savingsTag = "~72%"),
+    MAX("Max", quality = 50, longestEdge = 2048, proOnly = true, savingsTag = "~82%"),
 }
 
 /** Free tier gets Light only, this many times a day. */

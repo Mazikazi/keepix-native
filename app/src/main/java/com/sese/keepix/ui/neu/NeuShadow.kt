@@ -57,7 +57,7 @@ var NeuBlurScale: Float = 0.87f
 /**
  * Raised from the surface. The default 9/16 pair is the hero step (cards,
  * drawers, primary CTAs); see the shadow scale in
- * docs/design/ADDENDUM_geometry_and_decisions.md B4.
+ * the prototypes in docs/design/ (EX / EXS / IN / IN_DEEP / IN_SM).
  */
 fun Modifier.neuExtruded(
     shape: Shape = RoundedCornerShape(16.dp),
