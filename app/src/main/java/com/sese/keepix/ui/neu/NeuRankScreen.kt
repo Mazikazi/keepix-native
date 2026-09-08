@@ -96,7 +96,14 @@ fun NeuRankScreen(
                     Text("Y", style = NeuType.itemName, color = c.onAccent)
                 }
                 Text("You", style = NeuType.itemName, color = c.textPrimary, modifier = Modifier.weight(1f))
-                Text("$weeklySwipes swipes", style = NeuType.metadata, color = c.textSecondary)
+                Text(
+                    // "this session", not "this week": the count restarts with
+                    // the process (see KeepixViewModel.weeklySwipes), and a bare
+                    // "0 swipes" beside a live streak reads as a bug.
+                    "$weeklySwipes this session",
+                    style = NeuType.metadata,
+                    color = c.textSecondary,
+                )
             }
         }
 

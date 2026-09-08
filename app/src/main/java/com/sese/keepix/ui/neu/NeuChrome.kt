@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -336,6 +338,40 @@ fun NeuMedallion(
         contentAlignment = Alignment.Center,
     ) {
         Text(glyph, style = NeuType.screenTitle, color = glyphColor)
+    }
+}
+
+/**
+ * A round glyph button, the deck's action row control.
+ *
+ * Public and shared with the fullscreen viewer's action bar: those two rows do
+ * the same three things to the same photo, and having them be two different
+ * shapes was the most obvious seam left after the restyle.
+ */
+@Composable
+fun NeuActionCircle(
+    glyph: String,
+    size: Dp,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    inset: Boolean = false,
+    contentDescription: String? = null,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .size(size)
+            .let {
+                if (inset) it.neuInset(CircleShape, offset = 3.dp, blur = 6.dp)
+                else it.neuExtruded(CircleShape)
+            }
+            .semantics { contentDescription?.let { this.contentDescription = it } }
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Disabled keeps the extruded rest shape and drops the glyph to secondary.
+        Text(glyph, style = NeuType.screenTitle, color = if (enabled) tint else neu.textSecondary)
     }
 }
 

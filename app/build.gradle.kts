@@ -114,6 +114,7 @@ dependencies {
     
     // Image Loading
     implementation(libs.coil.compose)
+    implementation(libs.coil.video)
     
     // Room Database
     implementation(libs.androidx.room.runtime)

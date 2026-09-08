@@ -13,8 +13,19 @@ class KeepixPreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("keepix_prefs", Context.MODE_PRIVATE)
 
+    /**
+     * Days a binned item stays recoverable, always one of
+     * [RetentionWindow.STOPS].
+     *
+     * Snapped on read, not on write: shipped builds defaulted to 10, which is
+     * not a stop any more. Without this the settings wheel had to snap it as a
+     * side effect of being looked at -- so merely opening Settings rewrote the
+     * preference, and every other reader (onboarding, the bin note) still saw
+     * the unsnapped 10. Rounding is upward, so an existing window is never
+     * silently shortened; see [RetentionWindow.fromStoredDays].
+     */
     var retentionDays: Int
-        get() = prefs.getInt(KEY_RETENTION_DAYS, 10)
+        get() = RetentionWindow.fromStoredDays(prefs.getInt(KEY_RETENTION_DAYS, 10)).days
         set(value) = prefs.edit().putInt(KEY_RETENTION_DAYS, value).apply()
 
     var batchSize: Int

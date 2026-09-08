@@ -56,7 +56,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
-import com.sese.keepix.ui.components.GlassCard
+import com.sese.keepix.ui.neu.NeuActionCircle
+import com.sese.keepix.ui.neu.NeuMedallion
+import com.sese.keepix.ui.neu.NeuType
+import com.sese.keepix.ui.neu.neu
+import com.sese.keepix.ui.neu.neuExtruded
+import com.sese.keepix.ui.neu.neuInset
 import com.sese.keepix.ui.theme.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -435,28 +440,28 @@ fun FullscreenViewer(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 actionNotice?.let { notice ->
-                    GlassCard(cornerRadius = 20.dp) {
-                        Text(
-                            text = notice,
-                            color = TextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                        )
-                    }
+                    Text(
+                        text = notice,
+                        style = NeuType.buttonLabel,
+                        color = neu.textPrimary,
+                        modifier = Modifier
+                            .neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp, clipContent = false)
+                            .background(neu.surface, CircleShape)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 if (isGalleryMode) {
-                    GlassCard(cornerRadius = 20.dp) {
-                        Text(
-                            text = "${currentPage + 1} / ${galleryItems.size}",
-                            color = TextSecondary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-                    }
+                    Text(
+                        text = "${currentPage + 1} / ${galleryItems.size}",
+                        style = NeuType.metadata,
+                        color = neu.textSecondary,
+                        modifier = Modifier
+                            .neuExtruded(CircleShape, offset = 5.dp, blur = 10.dp, clipContent = false)
+                            .background(neu.surface, CircleShape)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
@@ -584,76 +589,65 @@ private fun ViewerActionBar(
     isFavorite: (Uri) -> Boolean = { false },
     modifier: Modifier = Modifier
 ) {
-    val primaryIcon: ImageVector = when (mode) {
-        ViewerMode.SWIPE -> Icons.Default.Check
+    val c = neu
+    // Text glyphs, not Material icons, and the deck's own NeuActionCircle:
+    // this row and the deck's row do the same three things to the same photo,
+    // and two different shapes for that was the last visible seam after the
+    // restyle. The photo behind is real content, so the row keeps a surface
+    // plate under it rather than floating the shadows over the image.
+    val primaryGlyph = when (mode) {
+        ViewerMode.SWIPE -> "✓"
         // RESTORE and UNKEEP both put the item back into the review queue.
-        ViewerMode.BIN, ViewerMode.KEPT -> Icons.Default.Refresh
+        ViewerMode.BIN, ViewerMode.KEPT -> "↺"
     }
-    val secondaryIcon: ImageVector = when (mode) {
-        ViewerMode.BIN -> Icons.Default.Delete
-        ViewerMode.SWIPE, ViewerMode.KEPT -> Icons.Default.Close
+    val secondaryGlyph = when (mode) {
+        ViewerMode.BIN -> "🗑"
+        ViewerMode.SWIPE, ViewerMode.KEPT -> "✕"
     }
 
-    GlassCard(modifier = modifier, cornerRadius = 36.dp) {
-        Row(
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(36.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ViewerAction(
-                icon = secondaryIcon,
-                label = mode.secondaryLabel,
-                tint = DeleteRedOverlay,
-                onClick = onSecondary
+    Row(
+        modifier
+            .neuExtruded(CircleShape, offset = 9.dp, blur = 16.dp, clipContent = false)
+            .background(c.surface, CircleShape)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            NeuActionCircle(
+                secondaryGlyph, 56.dp, c.clayGlyph,
+                contentDescription = mode.secondaryLabel,
+                onClick = onSecondary,
             )
-            ViewerAction(
-                icon = primaryIcon,
-                label = mode.primaryLabel,
-                tint = KeepGreenOverlay,
-                onClick = onPrimary
+            Spacer(Modifier.height(6.dp))
+            Text(mode.secondaryLabel, style = NeuType.navLabel, color = c.textSecondary)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            NeuActionCircle(
+                primaryGlyph, 56.dp, c.teal,
+                contentDescription = mode.primaryLabel,
+                onClick = onPrimary,
             )
-            if (onToggleFavorite != null) {
-                val favorited = isFavorite(targetUri)
-                ViewerAction(
-                    icon = Icons.Default.Star,
-                    label = "FAVORITE",
-                    // Gold when starred, a dim glass tint otherwise -- unlike
-                    // KEEP/DELETE this button is a toggle, so its background
-                    // (not just its icon) has to carry the current state.
-                    tint = if (favorited) FavoriteGoldOverlay else Color.White.copy(alpha = 0.12f),
-                    contentDescription = if (favorited) "Remove from favorites" else "Add to favorites",
-                    onClick = { onToggleFavorite(targetUri) }
-                )
+            Spacer(Modifier.height(6.dp))
+            Text(mode.primaryLabel, style = NeuType.navLabel, color = c.textSecondary)
+        }
+        if (onToggleFavorite != null) {
+            val favorited = isFavorite(targetUri)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                NeuActionCircle(
+                    glyph = if (favorited) "♥" else "♡",
+                    size = 56.dp,
+                    tint = if (favorited) c.favorite else c.textSecondary,
+                    // Carved when on. This is a toggle, and depth is the only
+                    // state cue the system allows -- the surface never tints.
+                    inset = favorited,
+                    contentDescription =
+                        if (favorited) "Remove from favorites" else "Add to favorites",
+                ) { onToggleFavorite(targetUri) }
+                Spacer(Modifier.height(6.dp))
+                Text("FAVORITE", style = NeuType.navLabel, color = c.textSecondary)
             }
         }
-    }
-}
-
-@Composable
-private fun ViewerAction(
-    icon: ImageVector,
-    label: String,
-    tint: Color,
-    onClick: () -> Unit,
-    /** Defaults to [label] -- only the favorite toggle needs these to differ. */
-    contentDescription: String = label
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(
-            onClick = onClick,
-            modifier = Modifier
-                .size(56.dp)
-                .background(tint, CircleShape)
-        ) {
-            Icon(imageVector = icon, contentDescription = contentDescription, tint = Color.White)
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = label,
-            color = TextSecondary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }
 
@@ -1538,7 +1532,11 @@ private fun VideoControlsOverlay(
     val durationF = state.durationMs.coerceAtLeast(1).toFloat()
     val sliderValue = if (state.isScrubbing) state.scrubMs else state.positionMs.toFloat()
 
-    GlassCard(modifier = modifier, cornerRadius = 28.dp) {
+    Box(
+        modifier
+            .neuExtruded(RoundedCornerShape(28.dp), offset = 9.dp, blur = 16.dp, clipContent = false)
+            .background(neu.surface, RoundedCornerShape(28.dp))
+    ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1629,6 +1627,7 @@ private fun GestureTutorialOverlay(
     isGalleryMode: Boolean,
     onDismiss: () -> Unit
 ) {
+    val c = neu
     var visible by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -1640,7 +1639,9 @@ private fun GestureTutorialOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.85f))
+                // The surface, not black: this covers the whole viewer, and a
+                // black sheet with soft-UI cards on it reads as two apps.
+                .background(c.surface)
                 .pointerInput(Unit) {
                     detectTapGestures { onDismiss() }
                 },
@@ -1648,52 +1649,46 @@ private fun GestureTutorialOverlay(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(40.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
                 modifier = Modifier.padding(32.dp)
             ) {
-                Text(
-                    text = "Gestures",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
+                Text("Gestures", style = NeuType.screenTitle, color = c.textPrimary)
+                Spacer(modifier = Modifier.height(10.dp))
 
                 if (isGalleryMode) {
                     // Left/right pages through the gallery here, so advertising
-                    // them as keep/delete would be a lie — the action bar is
+                    // them as keep/delete would be a lie -- the action bar is
                     // what performs those.
-                    GestureHint("↔", "Swipe sideways", "Browse", TextSecondary)
+                    GestureHint("↔", "Swipe sideways", "Browse", c.textSecondary)
                 } else {
-                    GestureHint("←", "Swipe left", mode.secondaryLabel, DeleteRed)
-                    GestureHint("→", "Swipe right", mode.primaryLabel, KeepGreen)
+                    GestureHint("←", "Swipe left", mode.secondaryLabel, c.clayGlyph)
+                    GestureHint("→", "Swipe right", mode.primaryLabel, c.teal)
                 }
-                GestureHint("↑", "Swipe up", "Go back", TextSecondary)
-                GestureHint("⤢", "Pinch / double tap", "Zoom photo", AccentPurple)
+                GestureHint("↑", "Swipe up", "Go back", c.textSecondary)
+                GestureHint("⤢", "Pinch / double tap", "Zoom photo", c.accent)
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Text(text = "Tap to dismiss", color = TextMuted, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(18.dp))
+                Text("Tap to dismiss", style = NeuType.metadata, color = c.textSecondary)
             }
         }
     }
 }
 
 @Composable
-private fun GestureHint(emoji: String, label: String, description: String, color: Color) {
+private fun GestureHint(glyph: String, label: String, description: String, color: Color) {
+    val c = neu
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .neuExtruded(RoundedCornerShape(32.dp), offset = 9.dp, blur = 16.dp)
+            .padding(18.dp),
     ) {
-        Text(
-            text = emoji, fontSize = 32.sp, color = color,
-            modifier = Modifier.width(48.dp), textAlign = TextAlign.Center
-        )
+        NeuMedallion(glyph, color, diameter = 48.dp)
         Column {
-            Text(text = label, color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text(text = description, color = color, fontSize = 14.sp)
+            Text(label, style = NeuType.sectionHeader, color = c.textPrimary)
+            Text(description, style = NeuType.metadata, color = color)
         }
     }
 }

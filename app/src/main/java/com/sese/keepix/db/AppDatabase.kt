@@ -111,6 +111,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Every migration, in order. One list rather than an argument list
+         * spelled out at each call site: a test that registers only its own
+         * migration cannot open the database at the current entity version, and
+         * "add the new one in both places" is exactly the step that gets
+         * forgotten. Add a migration here and everything picks it up.
+         */
+        val ALL_MIGRATIONS = arrayOf(
+            MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+        )
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -121,10 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "keepix_database"
                 )
-                    .addMigrations(
-                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-                        MIGRATION_6_7, MIGRATION_7_8,
-                    )
+                    .addMigrations(*ALL_MIGRATIONS)
                     .build()
                 INSTANCE = instance
                 instance

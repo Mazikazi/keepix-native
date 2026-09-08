@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +44,7 @@ fun NeuPermissionScreen(
     modifier: Modifier = Modifier,
 ) {
     val c = neu
-    Box(modifier.fillMaxSize().background(c.surface)) {
+    Box(modifier.fillMaxSize().background(c.surface).systemBarsPadding()) {
         // Three empty cards fanned out: the deck, before it has anything in it.
         Row(
             Modifier
@@ -140,6 +141,7 @@ fun NeuOnboardingScreen(
         modifier
             .fillMaxSize()
             .background(c.surface)
+            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -215,6 +217,7 @@ fun NeuPaywallSheet(
         modifier
             .fillMaxSize()
             .background(c.surface.copy(alpha = 0.86f))
+            .systemBarsPadding()
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.BottomCenter,
     ) {

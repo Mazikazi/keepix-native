@@ -96,7 +96,7 @@ class RoomMigration6To7Test {
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
-            .addMigrations(AppDatabase.MIGRATION_6_7)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
             .build()
 

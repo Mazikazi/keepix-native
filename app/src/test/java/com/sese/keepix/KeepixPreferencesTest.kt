@@ -34,21 +34,24 @@ class KeepixPreferencesTest {
     }
 
     @Test
-    fun `retentionDays returns default value when not set`() {
-        every { mockPrefs.getInt("retention_days", 10) } returns 10
-        assertEquals(10, preferences.retentionDays)
+    fun `retentionDays snaps the legacy 10-day default up to the nearest stop`() {
+        // 10 is not one of RetentionWindow.STOPS any more. Reading it back as 7
+        // would silently shorten a live recovery window by three days, so it
+        // rounds UP to 14; see KeepixPreferences.retentionDays.
+        every { mockPrefs.getInt("retention_days", 10) } returns 14
+        assertEquals(14, preferences.retentionDays)
     }
 
     @Test
-    fun `retentionDays returns stored value`() {
+    fun `retentionDays returns a stored value that is already a stop unchanged`() {
         every { mockPrefs.getInt("retention_days", 10) } returns 30
         assertEquals(30, preferences.retentionDays)
     }
 
     @Test
     fun `retentionDays setter stores value`() {
-        preferences.retentionDays = 15
-        verify { mockEditor.putInt("retention_days", 15) }
+        preferences.retentionDays = 14
+        verify { mockEditor.putInt("retention_days", 14) }
         verify { mockEditor.apply() }
     }
 
@@ -98,7 +101,7 @@ class KeepixPreferencesTest {
 
     @Test
     fun `isSessionMode returns false when retentionDays is not 0`() {
-        every { mockPrefs.getInt("retention_days", 10) } returns 10
+        every { mockPrefs.getInt("retention_days", 10) } returns 14
         assertFalse(preferences.isSessionMode)
     }
 
@@ -110,7 +113,7 @@ class KeepixPreferencesTest {
 
     @Test
     fun `getExpiryTimestamp returns future time for timed mode`() {
-        every { mockPrefs.getInt("retention_days", 10) } returns 10
+        every { mockPrefs.getInt("retention_days", 10) } returns 14
         val expiry = preferences.getExpiryTimestamp()
         assertTrue(expiry > System.currentTimeMillis())
     }

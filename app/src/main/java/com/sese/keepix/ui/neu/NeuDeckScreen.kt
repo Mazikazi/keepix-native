@@ -737,10 +737,10 @@ private fun ActionRow(
         horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ActionCircle("✕", 62.dp, c.clayGlyph, enabled = front != null) {
+        NeuActionCircle("✕", 62.dp, c.clayGlyph, enabled = front != null) {
             front?.let { onAction(it, DeckAction.BIN) }
         }
-        ActionCircle(
+        NeuActionCircle(
             glyph = if (favorited) "♥" else "♡",
             size = 46.dp,
             // Favourite is a button and never a gesture: a mis-swiped favourite
@@ -765,33 +765,9 @@ private fun ActionRow(
                 },
             contentAlignment = Alignment.Center,
         ) { Text("↓", style = NeuType.itemName, color = c.onAccent) }
-        ActionCircle("✓", 62.dp, c.teal, enabled = front != null) {
+        NeuActionCircle("✓", 62.dp, c.teal, enabled = front != null) {
             front?.let { onAction(it, DeckAction.KEEP) }
         }
-    }
-}
-
-@Composable
-private fun ActionCircle(
-    glyph: String,
-    size: Dp,
-    tint: Color,
-    enabled: Boolean = true,
-    inset: Boolean = false,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .size(size)
-            .let {
-                if (inset) it.neuInset(CircleShape, offset = 3.dp, blur = 6.dp)
-                else it.neuExtruded(CircleShape)
-            }
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        // Disabled keeps the extruded rest shape and drops the glyph to secondary.
-        Text(glyph, style = NeuType.screenTitle, color = if (enabled) tint else neu.textSecondary)
     }
 }
 

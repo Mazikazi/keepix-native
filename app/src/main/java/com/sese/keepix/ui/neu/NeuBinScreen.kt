@@ -81,7 +81,9 @@ fun NeuBinScreen(
             Column {
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.Bottom,
+                    // Centre, not Bottom: the Select button is taller than the
+                    // title, and baseline-aligning it lifts it off the row.
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     NeuScreenTitle("Bin")

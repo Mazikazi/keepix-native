@@ -120,7 +120,7 @@ class RoomMigration4To5Test {
         // raw SQL.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
-            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
             .build()
 
